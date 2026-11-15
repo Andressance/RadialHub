@@ -1,0 +1,212 @@
+-- QuickWheel · Wheel: geometría polar, modal en el cursor, animación (lerp en OnUpdate) y ejecución al soltar.
+-- Círculos nítidos sin máscaras: SetPortraitToTexture recorta cualquier textura en círculo, así que los
+-- iconos, los aros y los fondos son discos (WHITE8X8 teñido o el icono de Interface\Icons).
+local addonName, ns = ...
+local Wheel = {}
+ns.Wheel = Wheel
+
+local sqrt, cos, sin, atan2, floor, min, max, abs, pi = math.sqrt, math.cos, math.sin, math.atan2, math.floor, math.min, math.max, math.abs, math.pi
+local TWO_PI = pi * 2
+local WHITE = "Interface\\Buttons\\WHITE8X8"
+local FONT = "Fonts\\FRIZQT__.TTF"
+local DOTS = 6          -- puntos del indicador direccional
+local OPEN_TIME = 0.12  -- segundos de la animación de apertura
+
+-- Ángulo (radianes, convención matemática) del hueco i de n: el 1 arriba y el resto en sentido horario.
+local function SlotAngle(i, n) return pi / 2 - (i - 1) * TWO_PI / n end
+
+-- Hueco apuntado por el desplazamiento (dx, dy) desde el centro; nil dentro de la zona muerta.
+function Wheel.SliceAt(dx, dy, n, dead)
+	if n < 1 or dx * dx + dy * dy < dead * dead then return nil end
+	local a = (pi / 2 - atan2(dy, dx)) % TWO_PI -- ángulo en sentido horario desde arriba
+	return floor(a / (TWO_PI / n) + 0.5) % n + 1
+end
+
+local function Lerp(a, b, t) return a + (b - a) * t end
+
+local frame, bg, coreRing, coreDisc, label, dots, slots
+local active, selected = false, nil -- rueda abierta (tecla mantenida) / hueco apuntado
+local list, db = {}, nil
+local ox, oy = 0, 0                -- centro de la rueda en coordenadas de UIParent
+local R, S, dead = 0, 0, 0         -- radio, tamaño de icono, zona muerta (ya acotados)
+local ar, ag, ab = 1, 1, 1         -- color de acento
+local openT, ia, indA = 0, 0, 0    -- progreso de apertura, ángulo e intensidad del indicador
+
+local function Disc(parent, layer, r, g, b, a)
+	local t = parent:CreateTexture(nil, layer)
+	SetPortraitToTexture(t, WHITE)
+	t:SetVertexColor(r, g, b, a or 1)
+	return t
+end
+
+local function SizeDisc(t, d) t:SetWidth(d); t:SetHeight(d) end
+
+local function OnUpdate(_, dt)
+	dt = min(dt, 0.05)
+	if IsMouseButtonDown("RightButton") then Wheel.Cancel() return end
+
+	local anim, n = db.anim, #list
+	openT = anim and min(1, openT + dt / OPEN_TIME) or 1
+	local e = 1 - (1 - openT) ^ 3 -- ease-out
+	frame:SetAlpha(e)
+
+	-- Selección: cursor relativo al centro de la rueda.
+	local cx, cy = GetCursorPosition()
+	local scale = UIParent:GetEffectiveScale()
+	local idx = Wheel.SliceAt(cx / scale - ox, cy / scale - oy, n, dead)
+	if idx ~= selected then
+		selected = idx
+		if idx then
+			if db.sound then PlaySound("UChatScrollButton") end
+			label:SetText(list[idx].name)
+			label:SetTextColor(1, 1, 1)
+		else
+			label:SetText("Cancelar")
+			label:SetTextColor(0.5, 0.5, 0.55)
+		end
+	end
+
+	-- Iconos: el apuntado crece, se tiñe de acento y brilla.
+	local k = min(1, dt * 16)
+	local r = R * (0.55 + 0.45 * e)
+	for i = 1, n do
+		local b = slots[i]
+		local target = (i == selected) and 1 or 0
+		local h = anim and Lerp(b.h, target, k) or target
+		if abs(target - h) < 0.005 then h = target end
+		b.h = h
+		local sc = 1 + 0.25 * h
+		local a = SlotAngle(i, n)
+		b:SetScale(sc)
+		b:SetPoint("CENTER", frame, "CENTER", cos(a) * r / sc, sin(a) * r / sc)
+		b.ring:SetVertexColor(Lerp(0.32, ar, h), Lerp(0.32, ag, h), Lerp(0.36, ab, h), 0.9 + 0.1 * h)
+		local v = Lerp(0.65, 1, h)
+		b.icon:SetVertexColor(v, v, v)
+		b.glow:SetVertexColor(ar, ag, ab, 0.3 * h)
+	end
+
+	-- Indicador direccional: puntos desde la zona muerta hacia el hueco activo (giro por el arco corto).
+	if selected then
+		local ta = SlotAngle(selected, n)
+		if indA < 0.02 or not anim then
+			ia = ta
+		else
+			ia = ia + ((ta - ia + pi) % TWO_PI - pi) * min(1, dt * 14)
+		end
+	end
+	local indT = selected and 1 or 0
+	indA = anim and Lerp(indA, indT, min(1, dt * 14)) or indT
+	local r0 = dead + 8
+	local r1 = max(r0 + 12, R * e - S * 0.625 - 6)
+	for j = 1, DOTS do
+		local f = (j - 0.5) / DOTS
+		local d = dots[j]
+		local rr = Lerp(r0, r1, f)
+		d:SetPoint("CENTER", frame, "CENTER", cos(ia) * rr, sin(ia) * rr)
+		d:SetVertexColor(ar, ag, ab, indA * (0.2 + 0.7 * f))
+	end
+end
+
+local function Build()
+	if frame then return end
+	frame = CreateFrame("Frame", "QuickWheelFrame", UIParent)
+	frame:SetFrameStrata("FULLSCREEN_DIALOG")
+	frame:SetWidth(1); frame:SetHeight(1) -- solo ancla: todo lo demás se centra en él
+	frame:Hide()
+	tinsert(UISpecialFrames, "QuickWheelFrame") -- Escape cierra (y OnHide cancela)
+
+	bg       = Disc(frame, "BACKGROUND", 0, 0, 0, 1)
+	coreRing = Disc(frame, "BORDER", 1, 1, 1, 1)
+	coreDisc = Disc(frame, "ARTWORK", 0.04, 0.04, 0.06, 0.96)
+	for _, t in ipairs({ bg, coreRing, coreDisc }) do t:SetPoint("CENTER", frame, "CENTER", 0, 0) end
+
+	label = frame:CreateFontString(nil, "OVERLAY")
+	label:SetFont(FONT, 13, "OUTLINE")
+	label:SetJustifyH("CENTER")
+	label:SetPoint("CENTER", frame, "CENTER", 0, 0)
+
+	local dotFrame = CreateFrame("Frame", nil, frame)
+	dots = {}
+	for j = 1, DOTS do
+		dots[j] = Disc(dotFrame, "ARTWORK", 1, 1, 1, 0)
+		SizeDisc(dots[j], 4 + 3 * (j - 0.5) / DOTS)
+	end
+
+	slots = {}
+	for i = 1, #ns.Catalog do
+		local b = CreateFrame("Frame", nil, frame)
+		b.h = 0
+		b.ring = Disc(b, "BACKGROUND", 1, 1, 1, 1)
+		b.dark = Disc(b, "BORDER", 0.05, 0.05, 0.07, 0.95)
+		b.icon = b:CreateTexture(nil, "ARTWORK")
+		b.glow = Disc(b, "OVERLAY", 1, 1, 1, 0)
+		b.glow:SetBlendMode("ADD")
+		for _, t in ipairs({ b.ring, b.dark, b.icon, b.glow }) do t:SetPoint("CENTER", b, "CENTER", 0, 0) end
+		slots[i] = b
+	end
+
+	frame:SetScript("OnUpdate", OnUpdate)
+	frame:SetScript("OnHide", function() active, selected = false, nil end)
+	frame:RegisterEvent("PLAYER_REGEN_DISABLED") -- entrar en combate cancela la rueda abierta
+	frame:SetScript("OnEvent", function() Wheel.Cancel() end)
+end
+
+-- Tecla pulsada: coloca la rueda centrada en el cursor.
+function Wheel.Open()
+	if active then return end
+	db = ns.db
+	list = ns.GetActive()
+	if #list == 0 then ns.Print("no hay opciones activas. Usa /qw para activarlas."); return end
+	Build()
+
+	S = db.iconSize
+	R = db.radius
+	dead = max(10, min(db.deadzone, R - S * 0.65 - 10)) -- siempre queda sitio para el indicador
+	ar, ag, ab = db.accent[1], db.accent[2], db.accent[3]
+
+	SizeDisc(bg, 2 * (R + S * 0.625 + 10))
+	bg:SetVertexColor(0, 0, 0, db.bgAlpha)
+	SizeDisc(coreRing, 2 * dead + 4)
+	coreRing:SetVertexColor(ar, ag, ab, 0.55)
+	SizeDisc(coreDisc, 2 * dead)
+	label:SetWidth(max(2 * dead - 8, 60))
+	label:SetText("Cancelar")
+	label:SetTextColor(0.5, 0.5, 0.55)
+
+	for i, b in ipairs(slots) do
+		local entry = list[i]
+		if entry then
+			b:SetWidth(S); b:SetHeight(S)
+			SizeDisc(b.ring, S); SizeDisc(b.dark, S - 4); SizeDisc(b.icon, S - 8); SizeDisc(b.glow, S - 4)
+			if b.entry ~= entry then SetPortraitToTexture(b.icon, entry.icon); b.entry = entry end
+			b.h = 0
+			b:Show()
+		else
+			b:Hide()
+		end
+	end
+
+	local cx, cy = GetCursorPosition()
+	local scale = UIParent:GetEffectiveScale()
+	ox, oy = cx / scale, cy / scale
+	frame:ClearAllPoints()
+	frame:SetPoint("CENTER", UIParent, "BOTTOMLEFT", ox, oy)
+	frame:SetAlpha(0)
+	openT, indA, selected, active = db.anim and 0 or 1, 0, nil, true
+	frame:Show()
+end
+
+-- Tecla soltada: abre la opción apuntada (si la hay) y cierra la rueda.
+function Wheel.Release()
+	if not active then return end
+	local entry = selected and list[selected]
+	frame:Hide()
+	if entry then
+		if db.sound then PlaySound("igMainMenuOptionCheckBoxOn") end
+		ns.Run(entry)
+	end
+end
+
+function Wheel.Cancel()
+	if active then frame:Hide() end
+end

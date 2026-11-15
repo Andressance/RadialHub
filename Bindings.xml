@@ -1,0 +1,6 @@
+<Bindings>
+	<!-- Textos en español: BINDING_HEADER_QUICKWHEEL y BINDING_NAME_QUICKWHEEL_TOGGLE se definen en Core.lua -->
+	<Binding name="QUICKWHEEL_TOGGLE" header="QUICKWHEEL" runOnUp="true">
+		QuickWheel_OnKey(keystate)
+	</Binding>
+</Bindings>
