@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.7
+
+- El botón seguro de Personaje ahora usa atributos específicos para `LeftButton`, el clic usado por el atajo de RadialHub.
+
 ## 0.2.6
 
 - Corregido el error de `SetCooldown` con valores secretos: el botón seguro ya no lleva un `OnClick` de addon. La pulsación mantenida se detecta desde un marco separado.

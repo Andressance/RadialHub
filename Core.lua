@@ -22,8 +22,10 @@ for i = 1, ns.MAX_PROFILES do
 	input:SetSize(1, 1); input:SetPoint("BOTTOMLEFT", UIParent, "BOTTOMLEFT", -20, -20)
 	input:SetAlpha(0); input:EnableMouse(true); input:RegisterForClicks("AnyDown", "AnyUp")
 	input:SetAttribute("useOnKeyDown", false)
-	input:SetAttribute("*type1", nil)
-	input:SetAttribute("_onstate-rhcombat", [[if newstate == "combat" then self:SetAttribute("*type1", nil) end]])
+	-- This button is only bound through CLICK ...:LeftButton, so use the exact
+	-- click attributes instead of wildcard attributes.
+	input:SetAttribute("type1", nil)
+	input:SetAttribute("_onstate-rhcombat", [[if newstate == "combat" then self:SetAttribute("type1", nil) end]])
 	RegisterStateDriver(input, "rhcombat", "[combat] combat; nocombat")
 	secureInputs[i] = input
 end
@@ -32,8 +34,8 @@ function ns.SetSecureCharacterAction(i, enabled)
 	local input = secureInputs[i]
 	secureCharacterSelected[i] = enabled and CharacterMicroButton ~= nil or false
 	if InCombatLockdown() then return end
-	input:SetAttribute("*type1", secureCharacterSelected[i] and "click" or nil)
-	input:SetAttribute("*clickbutton1", secureCharacterSelected[i] and CharacterMicroButton or nil)
+	input:SetAttribute("type1", secureCharacterSelected[i] and "click" or nil)
+	input:SetAttribute("clickbutton1", secureCharacterSelected[i] and CharacterMicroButton or nil)
 end
 
 function ns.HasSecureCharacterAction(i) return secureCharacterSelected[i] end

@@ -98,10 +98,10 @@ local db = load(nil)
 check(#db.profiles[1].items == 9 and db.selected == 1, "profile 1 has the 9 built-ins")
 CharacterMicroButton = newFrame("CharacterMicroButton")
 ns.SetSecureCharacterAction(1, true)
-check(RadialHubSecureInput1:GetAttribute("*type1") == "click" and RadialHubSecureInput1:GetAttribute("*clickbutton1") == CharacterMicroButton,
+check(RadialHubSecureInput1:GetAttribute("type1") == "click" and RadialHubSecureInput1:GetAttribute("clickbutton1") == CharacterMicroButton,
 	"character uses a secure click target")
 ns.SetSecureCharacterAction(1, false)
-check(RadialHubSecureInput1:GetAttribute("*type1") == nil, "secure character click is cleared")
+check(RadialHubSecureInput1:GetAttribute("type1") == nil, "secure character click is cleared")
 ns.BindKey("ALT-X", 1)
 check(bindingClick[1] == "ALT-X" and bindingClick[2] == "RadialHubSecureInput1", "wheel key is bound to its secure input button")
 local active = ns.GetActive(1)
