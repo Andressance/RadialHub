@@ -1,4 +1,4 @@
-## Interface: 30300
+## Interface: 16001
 ## Title: QuickWheel
 ## Notes: Menú radial rápido: mantén una tecla, apunta con el ratón y suelta para abrir Personaje, Talentos, Bolsas, Mapa...
 ## Author: Andressance

@@ -1,14 +1,14 @@
 -- QuickWheel · Wheel: geometría polar, modal en el cursor, animación (lerp en OnUpdate) y ejecución al soltar.
--- Círculos nítidos sin máscaras: SetPortraitToTexture recorta cualquier textura en círculo, así que los
--- iconos, los aros y los fondos son discos (WHITE8X8 teñido o el icono de Interface\Icons).
+-- Círculos nítidos con máscara redonda (ns.Circle): iconos, aros y fondos son discos (WHITE8X8 teñido o icono).
 local addonName, ns = ...
 local Wheel = {}
 ns.Wheel = Wheel
 
 local sqrt, cos, sin, atan2, floor, min, max, abs, pi = math.sqrt, math.cos, math.sin, math.atan2, math.floor, math.min, math.max, math.abs, math.pi
 local TWO_PI = pi * 2
-local WHITE = "Interface\\Buttons\\WHITE8X8"
-local FONT = "Fonts\\FRIZQT__.TTF"
+local FONT = STANDARD_TEXT_FONT or "Fonts\\FRIZQT__.TTF"
+local SOUND_TICK = SOUNDKIT and SOUNDKIT.U_CHAT_SCROLL_BUTTON or 1115               -- al cambiar de opción
+local SOUND_PICK = SOUNDKIT and SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_ON or 856      -- al activar una
 local DOTS = 6          -- puntos del indicador direccional
 local OPEN_TIME = 0.12  -- segundos de la animación de apertura
 
@@ -34,7 +34,7 @@ local openT, ia, indA = 0, 0, 0    -- progreso de apertura, ángulo e intensidad
 
 local function Disc(parent, layer, r, g, b, a)
 	local t = parent:CreateTexture(nil, layer)
-	SetPortraitToTexture(t, WHITE)
+	ns.Circle(t)
 	t:SetVertexColor(r, g, b, a or 1)
 	return t
 end
@@ -57,7 +57,7 @@ local function OnUpdate(_, dt)
 	if idx ~= selected then
 		selected = idx
 		if idx then
-			if db.sound then PlaySound("UChatScrollButton") end
+			if db.sound then PlaySound(SOUND_TICK) end
 			label:SetText(list[idx].name)
 			label:SetTextColor(1, 1, 1)
 		else
@@ -122,6 +122,7 @@ local function Build()
 
 	label = frame:CreateFontString(nil, "OVERLAY")
 	label:SetFont(FONT, 13, "OUTLINE")
+	label:SetWordWrap(true)
 	label:SetJustifyH("CENTER")
 	label:SetPoint("CENTER", frame, "CENTER", 0, 0)
 
@@ -178,7 +179,7 @@ function Wheel.Open()
 		if entry then
 			b:SetWidth(S); b:SetHeight(S)
 			SizeDisc(b.ring, S); SizeDisc(b.dark, S - 4); SizeDisc(b.icon, S - 8); SizeDisc(b.glow, S - 4)
-			if b.entry ~= entry then SetPortraitToTexture(b.icon, entry.icon); b.entry = entry end
+			if b.entry ~= entry then ns.Circle(b.icon, entry.icon); b.entry = entry end
 			b.h = 0
 			b:Show()
 		else
@@ -202,7 +203,7 @@ function Wheel.Release()
 	local entry = selected and list[selected]
 	frame:Hide()
 	if entry then
-		if db.sound then PlaySound("igMainMenuOptionCheckBoxOn") end
+		if db.sound then PlaySound(SOUND_PICK) end
 		ns.Run(entry)
 	end
 end

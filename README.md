@@ -1,6 +1,6 @@
 # QuickWheel
 
-Menú radial rápido para **WoW 3.3.5a (Wrath / WoW Forever)**: abre Personaje, Talentos, Bolsas, Mapa... sin buscar botones ni memorizar atajos.
+Menú radial rápido para **WoW Forever** (Interface 16001): abre Personaje, Talentos, Bolsas, Mapa... sin buscar botones ni memorizar atajos.
 
 1. **Mantén** la tecla: la rueda aparece centrada en el cursor.
 2. **Mueve el ratón** hacia una opción: crece, se ilumina con el color de acento y su nombre aparece en el centro. En el centro (zona muerta) no hay nada seleccionado ("Cancelar").
@@ -8,7 +8,7 @@ Menú radial rápido para **WoW 3.3.5a (Wrath / WoW Forever)**: abre Personaje, 
 
 ## Instalación
 
-Copia la carpeta a `World of Warcraft/_forever_/Interface/AddOns/QuickWheel` (el nombre de la carpeta debe ser `QuickWheel`) y reinicia el cliente.
+Copia la carpeta a `World of Warcraft/_forever_/Interface/AddOns/QuickWheel` (el nombre de la carpeta debe ser `QuickWheel`) y reinicia el cliente. Si ves un panel que no abre, escribe `/qw check`: lista la ruta que usa cada opción en tu cliente (o "NO DISPONIBLE").
 
 Funciona nada más instalarlo: en el primer inicio asigna **ALT-Q** si esa tecla está libre (si no, te avisa para que elijas otra con `/qw`).
 
@@ -24,8 +24,8 @@ Paneles disponibles: Personaje, Talentos, Libro de hechizos, Misiones, Mapa del 
 
 ## Notas técnicas
 
-- Solo API de 3.3.5a (Lua 5.1): los círculos se hacen con `SetPortraitToTexture`, la animación con `OnUpdate`.
-- Guarda todo en `QuickWheelDB` (SavedVariables). Código en un namespace privado; los únicos globales son los que exige el cliente.
+- Cada opción lanza el atajo nativo del propio juego (`RunBinding`), así abre el panel correcto de tu cliente; si ese atajo no existe, prueba funciones alternativas (ver el catálogo en `Core.lua`).
+- Círculos con máscara redonda (`CreateMaskTexture`), animación con `OnUpdate`, ajustes en `QuickWheelDB` (SavedVariables). Código en un namespace privado; los únicos globales son los que exige el cliente.
 - Pruebas de la lógica con el API simulado: `lua tests/test.lua` (desde la raíz del repo).
 
 ## Licencia

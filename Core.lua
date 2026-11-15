@@ -1,46 +1,82 @@
 -- QuickWheel · Core: base de datos, catálogo de acciones, atajo y comandos.
--- WoW 3.3.5a (Lua 5.1). Todo vive en el namespace privado `ns`; los únicos globales son los que
--- el cliente exige: QuickWheelDB (SavedVariables), QuickWheel_OnKey (Bindings.xml), los textos de
--- BINDING_*, SLASH_*, y los marcos con nombre QuickWheelFrame / QuickWheelConfig (para cerrar con Escape).
+-- Cliente WoW Forever (Interface 16001, motor moderno). Todo vive en el namespace privado `ns`; los únicos
+-- globales son los que el cliente exige: QuickWheelDB (SavedVariables), QuickWheel_OnKey (Bindings.xml),
+-- los textos de BINDING_*, SLASH_*, y los marcos con nombre QuickWheelFrame / QuickWheelConfig (para Escape).
 local addonName, ns = ...
 
 BINDING_HEADER_QUICKWHEEL = "QuickWheel"
 BINDING_NAME_QUICKWHEEL_TOGGLE = "Abrir rueda (mantener pulsada)"
 
 local BINDING = "QUICKWHEEL_TOGGLE"
-local DEFAULT_KEY = "ALT-Q" -- libre en la interfaz por defecto; solo se asigna una vez y si está libre
+local DEFAULT_KEY = "ALT-Q" -- solo se asigna una vez y si está libre
 
 function ns.Print(msg)
 	DEFAULT_CHAT_FRAME:AddMessage("|cffffd100QuickWheel|r: " .. msg)
 end
 
 ----------------------------------------------------------------------------------------------------
--- Catálogo de acciones. Para añadir un panel basta con una entrada más (id único, nombre, icono, run).
--- default = activo en una instalación nueva.
+-- Círculos nítidos con la máscara redonda de Blizzard (mismo recurso que los retratos).
+-- Sirve para el icono (path) y para discos de color (sin path = textura blanca que se tiñe con SetVertexColor).
+----------------------------------------------------------------------------------------------------
+local WHITE = "Interface\\Buttons\\WHITE8X8"
+local MASK = "Interface\\CharacterFrame\\TempPortraitAlphaMask"
+
+function ns.Circle(tex, path)
+	path = path or WHITE
+	tex:SetTexture(path)
+	if tex.AddMaskTexture then
+		if not tex.qwMask then
+			local mask = tex:GetParent():CreateMaskTexture()
+			mask:SetTexture(MASK, "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE")
+			mask:SetAllPoints(tex)
+			tex:AddMaskTexture(mask)
+			tex.qwMask = mask
+		end
+	else
+		SetPortraitToTexture(tex, path) -- clientes sin máscaras
+	end
+end
+
+----------------------------------------------------------------------------------------------------
+-- Catálogo de acciones. Para añadir un panel basta con una entrada más.
+-- Cada acción usa el atajo nativo del propio juego (RunBinding), así abre el panel correcto de ESTE cliente:
+--   bind = nombres de binding por orden; vale el primero que existe (se comprueba con BINDING_NAME_<bind>).
+--   fn   = alternativas si no hay binding: { "Funcion" o "Tabla.Funcion", arg1, arg2... }.
+-- /qw check muestra qué ruta usa cada entrada en tu cliente.
 ----------------------------------------------------------------------------------------------------
 local ICON = "Interface\\Icons\\"
 
 ns.Catalog = {
-	{ id = "character",    name = "Personaje",             icon = ICON .. "INV_Shirt_White_01",       default = true,
-		run = function() ToggleCharacter("PaperDollFrame") end },
+	{ id = "character",    name = "Personaje",             icon = ICON .. "INV_Shirt_White_01",        default = true,
+		bind = { "TOGGLECHARACTER0" },
+		fn = { { "ToggleCharacter", "PaperDollFrame" } } },
 	{ id = "talents",      name = "Talentos",              icon = ICON .. "Spell_Holy_ArcaneIntellect", default = true,
-		run = function() ToggleTalentFrame() end },
-	{ id = "spellbook",    name = "Libro de hechizos",     icon = ICON .. "INV_Misc_Book_09",         default = true,
-		run = function() ToggleSpellBook(BOOKTYPE_SPELL) end },
-	{ id = "quests",       name = "Misiones",              icon = ICON .. "INV_Misc_Note_01",         default = true,
-		run = function() ToggleQuestLog() end },
-	{ id = "map",          name = "Mapa del mundo",        icon = ICON .. "INV_Misc_Map_01",          default = true,
-		run = function() ToggleWorldMap() end },
-	{ id = "guild",        name = "Hermandad",             icon = ICON .. "INV_Shirt_GuildTabard_01", default = true,
-		run = function() ToggleFriendsFrame(3) end },
-	{ id = "bags",         name = "Bolsas",                icon = ICON .. "INV_Misc_Bag_08",          default = true,
-		run = function() if IsBagOpen(0) then CloseAllBags() else OpenAllBags() end end },
-	{ id = "achievements", name = "Logros",                icon = ICON .. "Achievement_General",      default = true,
-		run = function() ToggleAchievementFrame() end },
-	{ id = "lfd",          name = "Buscador de mazmorras", icon = ICON .. "INV_Misc_GroupLooking",    default = false,
-		run = function() ToggleLFDParentFrame() end },
+		bind = { "TOGGLETALENTS" },
+		fn = { { "PlayerSpellsUtil.ToggleClassTalentOrSpecFrame" }, { "ToggleTalentFrame" } } },
+	{ id = "spellbook",    name = "Libro de hechizos",     icon = ICON .. "INV_Misc_Book_09",          default = true,
+		bind = { "TOGGLESPELLBOOK" },
+		fn = { { "PlayerSpellsUtil.ToggleSpellBookFrame" }, { "ToggleSpellBook", "spell" } } },
+	{ id = "quests",       name = "Misiones",              icon = ICON .. "INV_Misc_Note_01",          default = true,
+		bind = { "TOGGLEQUESTLOG" },
+		fn = { { "ToggleQuestLog" } } },
+	{ id = "map",          name = "Mapa del mundo",        icon = ICON .. "INV_Misc_Map_01",           default = true,
+		bind = { "TOGGLEWORLDMAP" },
+		fn = { { "ToggleWorldMap" } } },
+	{ id = "guild",        name = "Hermandad",             icon = ICON .. "INV_Shirt_GuildTabard_01",  default = true,
+		bind = { "TOGGLEGUILDTAB" },
+		fn = { { "ToggleGuildFrame" }, { "ToggleFriendsFrame", 3 } } },
+	{ id = "bags",         name = "Bolsas",                icon = ICON .. "INV_Misc_Bag_08",           default = true,
+		bind = { "OPENALLBAGS" },
+		fn = { { "ToggleAllBags" } } },
+	{ id = "achievements", name = "Logros",                icon = ICON .. "Achievement_General",       default = true,
+		bind = { "TOGGLEACHIEVEMENT" },
+		fn = { { "ToggleAchievementFrame" } } },
+	{ id = "lfd",          name = "Buscador de mazmorras", icon = ICON .. "INV_Misc_GroupLooking",     default = false,
+		bind = { "TOGGLEGROUPFINDER", "TOGGLELFGPARENT" },
+		fn = { { "PVEFrame_ToggleFrame" }, { "ToggleLFDParentFrame" } } },
 	{ id = "pets",         name = "Mascotas y monturas",   icon = ICON .. "Ability_Mount_RidingHorse", default = false,
-		run = function() ToggleCharacter("PetPaperDollFrame") end },
+		bind = { "TOGGLEMOUNTJOURNAL", "TOGGLECOLLECTIONS", "TOGGLEPETBOOK" },
+		fn = { { "ToggleCollectionsJournal" }, { "ToggleCharacter", "PetPaperDollFrame" } } },
 }
 
 ns.CatalogByID = {}
@@ -53,6 +89,36 @@ ns.Presets = {
 	{ name = "Esmeralda",    0.20, 0.85, 0.50 },
 	{ name = "Blanco",       1.00, 1.00, 1.00 },
 }
+
+-- Ruta que usará la entrada en este cliente: "binding", nombre  |  "fn", nombre, función, args  |  nil.
+local function Resolve(entry)
+	for _, b in ipairs(entry.bind) do
+		if _G["BINDING_NAME_" .. b] then return "binding", b end
+	end
+	for _, spec in ipairs(entry.fn) do
+		local f = _G
+		for part in spec[1]:gmatch("[^.]+") do f = type(f) == "table" and f[part] or nil end
+		if type(f) == "function" then return "fn", spec[1], f, spec end
+	end
+end
+
+function ns.Run(entry)
+	local kind, what, f, spec = Resolve(entry)
+	if not kind then
+		ns.Print(entry.name .. " no está disponible en este cliente (/qw check para ver el detalle).")
+		return
+	end
+	local ok, err
+	if kind == "binding" then ok, err = pcall(RunBinding, what) else ok, err = pcall(f, unpack(spec, 2)) end
+	if not ok then ns.Print("No se pudo abrir " .. entry.name .. ": " .. tostring(err)) end
+end
+
+function ns.Check()
+	for _, entry in ipairs(ns.Catalog) do
+		local kind, what = Resolve(entry)
+		ns.Print(entry.name .. ": " .. (kind and (kind .. " " .. what) or "|cffff4040NO DISPONIBLE|r"))
+	end
+end
 
 ----------------------------------------------------------------------------------------------------
 -- QuickWheelDB
@@ -98,11 +164,6 @@ function ns.GetActive()
 		if ns.db.enabled[id] then list[#list + 1] = ns.CatalogByID[id] end
 	end
 	return list
-end
-
-function ns.Run(entry)
-	local ok, err = pcall(entry.run)
-	if not ok then ns.Print("No se pudo abrir " .. entry.name .. ": " .. tostring(err)) end
 end
 
 ----------------------------------------------------------------------------------------------------
@@ -155,4 +216,6 @@ end)
 
 SLASH_QUICKWHEEL1 = "/qw"
 SLASH_QUICKWHEEL2 = "/quickwheel"
-SlashCmdList["QUICKWHEEL"] = function() ns.Config.Toggle() end
+SlashCmdList["QUICKWHEEL"] = function(msg)
+	if strlower(strtrim(msg or "")) == "check" then ns.Check() else ns.Config.Toggle() end
+end

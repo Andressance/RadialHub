@@ -6,7 +6,7 @@ ns.Config = Config
 
 local floor = math.floor
 local WHITE = "Interface\\Buttons\\WHITE8X8"
-local FONT = "Fonts\\FRIZQT__.TTF"
+local FONT = STANDARD_TEXT_FONT or "Fonts\\FRIZQT__.TTF"
 local BINDING = "QUICKWHEEL_TOGGLE"
 local BD = { bgFile = WHITE, edgeFile = WHITE, edgeSize = 1, insets = { left = 1, right = 1, top = 1, bottom = 1 } }
 
@@ -27,7 +27,7 @@ local function Text(parent, size, r, g, b, text)
 end
 
 local function Flat(parent, w, h, text)
-	local b = CreateFrame("Button", nil, parent)
+	local b = CreateFrame("Button", nil, parent, "BackdropTemplate")
 	b:SetWidth(w); b:SetHeight(h)
 	b:SetBackdrop(BD)
 	b:SetBackdropColor(0.14, 0.14, 0.17, 1)
@@ -109,7 +109,7 @@ local function Refresh()
 
 	for i, id in ipairs(db.order) do
 		local row, entry = rows[i], ns.CatalogByID[id]
-		SetPortraitToTexture(row.icon, entry.icon)
+		ns.Circle(row.icon, entry.icon)
 		row.name:SetText(entry.name)
 		local on = db.enabled[id]
 		row.name:SetTextColor(on and 0.95 or 0.45, on and 0.95 or 0.45, on and 0.95 or 0.5)
@@ -159,20 +159,25 @@ end
 local function OpenColorPicker()
 	local a = ns.db.accent
 	local pr, pg, pb = a[1], a[2], a[3]
-	ColorPickerFrame.hasOpacity = false
-	ColorPickerFrame.opacity = nil
-	ColorPickerFrame.previousValues = { pr, pg, pb }
-	ColorPickerFrame.func = function() SetAccent(ColorPickerFrame:GetColorRGB()) end
-	ColorPickerFrame.cancelFunc = function() SetAccent(pr, pg, pb) end
-	ColorPickerFrame:SetColorRGB(pr, pg, pb)
-	ColorPickerFrame:Hide(); ColorPickerFrame:Show() -- Hide/Show fuerza a recargar func y colores
+	local function apply() SetAccent(ColorPickerFrame:GetColorRGB()) end
+	local function cancel() SetAccent(pr, pg, pb) end
+	if ColorPickerFrame.SetupColorPickerAndShow then -- API moderna
+		ColorPickerFrame:SetupColorPickerAndShow({ r = pr, g = pg, b = pb, hasOpacity = false, swatchFunc = apply, cancelFunc = cancel })
+	else
+		ColorPickerFrame.hasOpacity = false
+		ColorPickerFrame.opacity = nil
+		ColorPickerFrame.previousValues = { pr, pg, pb }
+		ColorPickerFrame.func, ColorPickerFrame.cancelFunc = apply, cancel
+		ColorPickerFrame:SetColorRGB(pr, pg, pb)
+		ColorPickerFrame:Hide(); ColorPickerFrame:Show() -- Hide/Show fuerza a recargar func y colores
+	end
 end
 
 ----------------------------------------------------------------------------------------------------
 -- Ventana
 ----------------------------------------------------------------------------------------------------
 local function Build()
-	frame = CreateFrame("Frame", "QuickWheelConfig", UIParent)
+	frame = CreateFrame("Frame", "QuickWheelConfig", UIParent, "BackdropTemplate")
 	frame:SetWidth(680); frame:SetHeight(470)
 	frame:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
 	frame:SetFrameStrata("HIGH") -- por debajo del selector de color (DIALOG)
@@ -192,7 +197,8 @@ local function Build()
 
 	local title = Text(frame, 16, 1, 0.82, 0.2, "QuickWheel")
 	title:SetPoint("TOPLEFT", frame, "TOPLEFT", 16, -14)
-	local ver = Text(frame, 10, 0.5, 0.5, 0.55, "v" .. (GetAddOnMetadata(addonName, "Version") or "?"))
+	local getMeta = C_AddOns and C_AddOns.GetAddOnMetadata or GetAddOnMetadata
+	local ver = Text(frame, 10, 0.5, 0.5, 0.55, "v" .. (getMeta(addonName, "Version") or "?"))
 	ver:SetPoint("LEFT", title, "RIGHT", 8, -2)
 	local close = Flat(frame, 22, 22, "X")
 	close:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -8, -8)
@@ -309,8 +315,14 @@ Text(panel, 12, 0.9, 0.9, 0.9, "Rueda radial rápida. También con /qw."):SetPoi
 local open = Flat(panel, 200, 26, "Abrir configuración")
 open:SetPoint("TOPLEFT", panel, "TOPLEFT", 16, -72)
 open:SetScript("OnClick", function()
-	HideUIPanel(InterfaceOptionsFrame) -- si no, queda por encima de nuestra ventana
+	-- si no, estos paneles tapan nuestra ventana (alguno puede no existir en este cliente)
+	if SettingsPanel then HideUIPanel(SettingsPanel) end
+	if InterfaceOptionsFrame then HideUIPanel(InterfaceOptionsFrame) end
 	HideUIPanel(GameMenuFrame)
 	if not (frame and frame:IsShown()) then Config.Toggle() end
 end)
-InterfaceOptions_AddCategory(panel)
+if Settings and Settings.RegisterCanvasLayoutCategory then
+	Settings.RegisterAddOnCategory(Settings.RegisterCanvasLayoutCategory(panel, panel.name))
+else
+	InterfaceOptions_AddCategory(panel)
+end

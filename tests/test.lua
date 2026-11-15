@@ -35,11 +35,12 @@ local cursor = { 500, 400 }
 GetCursorPosition = function() return cursor[1], cursor[2] end
 
 local calls = {}
-BOOKTYPE_SPELL = "spell"
-for _, fn in ipairs({ "ToggleCharacter", "ToggleTalentFrame", "ToggleQuestLog", "ToggleWorldMap", "ToggleFriendsFrame", "ToggleAchievementFrame" }) do
-	_G[fn] = function() calls[#calls + 1] = fn end
+strlower, strtrim = string.lower, function(s) return (s:gsub("^%s+", ""):gsub("%s+$", "")) end
+RunBinding = function(name) calls[#calls + 1] = "binding:" .. name end
+for _, b in ipairs({ "TOGGLECHARACTER0", "TOGGLETALENTS", "TOGGLESPELLBOOK", "TOGGLEQUESTLOG", "TOGGLEWORLDMAP",
+	"TOGGLEGUILDTAB", "OPENALLBAGS", "TOGGLEACHIEVEMENT" }) do
+	_G["BINDING_NAME_" .. b] = b
 end
-ToggleSpellBook = function(book) calls[#calls + 1] = "ToggleSpellBook:" .. book end
 
 local ns = {}
 for _, file in ipairs({ "Core.lua", "Wheel.lua", "Config.lua" }) do assert(loadfile(file))("QuickWheel", ns) end
@@ -86,11 +87,12 @@ check(wheel, "wheel frame found")
 cursor[1], cursor[2] = 600, 400 -- 100px to the right of the open position
 wheel.scripts.OnUpdate(wheel, 0.016)
 ns.Wheel.Release()
-check(calls[#calls] == "ToggleSpellBook:spell", "released on slot 3 -> spellbook, got " .. tostring(calls[#calls]))
+check(calls[#calls] == "binding:TOGGLESPELLBOOK", "released on slot 3 -> spellbook binding, got " .. tostring(calls[#calls]))
 
 -- 5. release in the deadzone and Escape cancel do nothing
 local n = #calls
-ns.Wheel.Open(); cursor[1], cursor[2] = 500, 400
+cursor[1], cursor[2] = 500, 400
+ns.Wheel.Open()
 wheel.scripts.OnUpdate(wheel, 0.016); ns.Wheel.Release()
 ns.Wheel.Open(); wheel:Hide(); ns.Wheel.Release() -- Escape hides the frame, the later key-up must be ignored
 check(#calls == n, "cancel paths run nothing")
@@ -100,8 +102,23 @@ db.keyInit = true; db.radius = 999; db.enabled.character = false
 ns.ResetDB()
 check(db.radius == 110 and db.enabled.character and db.keyInit, "reset restores defaults, keeps keyInit")
 
+-- 6b. no binding for this client -> falls back to the function; neither -> says so
+BINDING_NAME_TOGGLEQUESTLOG = nil
+ToggleQuestLog = function() calls[#calls + 1] = "fn:ToggleQuestLog" end
+ns.Run(ns.CatalogByID.quests)
+check(calls[#calls] == "fn:ToggleQuestLog", "fallback to function")
+ToggleQuestLog = nil
+ns.Run(ns.CatalogByID.quests)
+check(printed[#printed]:find("no est"), "unavailable reported")
+PlayerSpellsUtil = { ToggleClassTalentOrSpecFrame = function() calls[#calls + 1] = "fn:talents" end }
+BINDING_NAME_TOGGLETALENTS = nil
+ns.Run(ns.CatalogByID.talents)
+check(calls[#calls] == "fn:talents", "dotted function path resolved")
+ns.Check()
+
 -- 7. a failing action is reported, not thrown
-ns.Run({ name = "X", run = function() error("boom") end })
+Boom = function() error("boom") end
+ns.Run({ name = "X", bind = {}, fn = { { "Boom" } } })
 check(printed[#printed]:find("No se pudo abrir X"), "action error printed")
 
 print("ok")
