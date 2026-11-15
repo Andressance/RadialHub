@@ -1,14 +1,17 @@
 -- Run from the repo root: lua tests/test.lua
 -- Mocks just enough of the WoW API to load Core/Wheel/Config and drive them. It checks the logic
--- (polar math, DB merge/reorder/reset, open -> point -> release), not how the real client renders it.
+-- (polar math, profiles/DB, custom entries, open -> point -> release, config window builds), not how
+-- the real client renders it.
 math.atan2 = math.atan2 or function(y, x) return math.atan(y, x) end -- Lua 5.1 (WoW) has atan2; 5.4 does not
 unpack = unpack or table.unpack
 tinsert = table.insert
 wipe = function(t) for k in pairs(t) do t[k] = nil end return t end
+strlower = string.lower
+strtrim = function(s) return (s:gsub("^%s+", ""):gsub("%s+$", "")) end
 
 local function noop() end
-local function newFrame()
-	local f = { scripts = {}, shown = true }
+local function newFrame(name)
+	local f = { scripts = {}, shown = true, name = name, text = "" }
 	function f:SetScript(n, fn) self.scripts[n] = fn end
 	function f:Show() self.shown = true end
 	function f:Hide()
@@ -18,25 +21,37 @@ local function newFrame()
 	function f:IsShown() return self.shown end
 	function f:IsEnabled() return true end
 	function f:GetEffectiveScale() return 1 end
+	function f:GetHeight() return 600 end
+	function f:GetWidth() return 780 end
+	function f:HasFocus() return false end
+	function f:GetChecked() return false end
+	function f:SetText(t) self.text = t end
+	function f:GetText() return self.text end
+	if name then _G[name] = f end
 	return setmetatable(f, { __index = function() return function(self) return self end end }) -- any other method: no-op
 end
 local frames = {}
-function CreateFrame() local f = newFrame(); frames[#frames + 1] = f; return f end
+function CreateFrame(_, name) local f = newFrame(name); frames[#frames + 1] = f; return f end
 UIParent = newFrame()
 UISpecialFrames = {}
 SlashCmdList = {}
 printed = {}
-DEFAULT_CHAT_FRAME = { AddMessage = function(_, m) printed[#printed + 1] = m end }
+DEFAULT_CHAT_FRAME = { AddMessage = function(_, m) printed[#printed + 1] = m end, editBox = newFrame() }
 SetPortraitToTexture, PlaySound, InterfaceOptions_AddCategory = noop, noop, noop
 GetAddOnMetadata = function() return "test" end
-IsMouseButtonDown = function() return false end
+local mouseDown, keyDown = {}, {}
+IsMouseButtonDown = function(b) return mouseDown[b] or false end
+IsKeyDown = function(k) return keyDown[k] or false end
+GetBindingKey = function() return "ALT-Q" end
 InCombatLockdown = function() return false end
+SetBinding, SaveBindings, GetCurrentBindingSet = function() return true end, noop, function() return 1 end
 local cursor = { 500, 400 }
 GetCursorPosition = function() return cursor[1], cursor[2] end
 
 local calls = {}
-strlower, strtrim = string.lower, function(s) return (s:gsub("^%s+", ""):gsub("%s+$", "")) end
 RunBinding = function(name) calls[#calls + 1] = "binding:" .. name end
+RunScript = function(code) calls[#calls + 1] = "script:" .. code end
+ChatEdit_SendText = function(box) calls[#calls + 1] = "chat:" .. box:GetText() end
 for _, b in ipairs({ "TOGGLECHARACTER0", "TOGGLETALENTS", "TOGGLESPELLBOOK", "TOGGLEQUESTLOG", "TOGGLEWORLDMAP",
 	"TOGGLEGUILDTAB", "OPENALLBAGS", "TOGGLEACHIEVEMENT" }) do
 	_G["BINDING_NAME_" .. b] = b
@@ -46,6 +61,12 @@ local ns = {}
 for _, file in ipairs({ "Core.lua", "Wheel.lua", "Config.lua" }) do assert(loadfile(file))("QuickWheel", ns) end
 
 local function check(cond, msg) if not cond then error("FAIL: " .. msg, 2) end end
+local function load(db)
+	QuickWheelDB = db
+	local events = frames[1]
+	events.scripts.OnEvent(events, "ADDON_LOADED", "QuickWheel")
+	return QuickWheelDB
+end
 
 -- 1. polar math: 8 slots, #1 on top, clockwise
 local at = ns.Wheel.SliceAt
@@ -59,28 +80,24 @@ check(at(10, 10, 8, 30) == nil, "inside deadzone -> nil")
 check(at(0, 100, 1, 30) == 1 and at(0, -100, 1, 30) == 1, "single slot")
 check(at(0, 100, 0, 30) == nil, "no slots")
 
--- 2. DB: fresh install
-local events = frames[1]
-events.scripts.OnEvent(events, "ADDON_LOADED", "QuickWheel")
-local db = QuickWheelDB
-check(#db.order == 10, "10 ids in order")
-local active = ns.GetActive()
+-- 2. fresh install
+local db = load(nil)
+check(#db.profiles[1].items == 10 and db.selected == 1, "profile 1 has the 10 built-ins")
+local active = ns.GetActive(1)
 check(#active == 8 and active[1].id == "character" and active[8].id == "achievements", "8 default entries in catalog order")
+check(ns.GetActive(2) == nil, "profile 2 does not exist yet")
 
--- 3. DB: old save with an unknown id, a missing id and a disabled entry
-QuickWheelDB = { order = { "bags", "ghost", "map" }, enabled = { bags = true, map = false }, radius = 150 }
-ns.db = QuickWheelDB
-events.scripts.OnEvent(events, "ADDON_LOADED", "QuickWheel")
-db = QuickWheelDB
-check(db.radius == 150 and db.iconSize == 52, "kept saved value, filled the rest")
-check(db.order[1] == "bags" and db.order[2] == "map" and #db.order == 10, "ghost dropped, missing appended, order kept")
-check(not db.enabled.map and db.enabled.character and not db.enabled.lfd, "enabled merged with defaults")
+-- 3. migration from the single-wheel save (order/enabled), dropping a deleted id and appending new ones
+db = load({ order = { "bags", "ghost", "map" }, enabled = { bags = true, map = false }, radius = 150 })
+local items = db.profiles[1].items
+check(db.radius == 150 and db.iconSize == 52 and not db.order and not db.enabled, "migrated, kept saved value, filled the rest")
+check(items[1].id == "bags" and items[1].on and items[2].id == "map" and not items[2].on and #items == 10, "order kept, ghost dropped, missing appended")
+check(items[3].on == true and items[#items].on == false, "new built-ins use their defaults")
 
--- 4. open -> point right -> release runs the 3rd active entry
-db.order = { "character", "talents", "spellbook", "quests", "map", "guild", "bags", "achievements", "lfd", "pets" }
-db.enabled.map = true
-ns.Wheel.Open()
-check(frames[#frames].shown or true, "wheel built")
+-- 4. open -> point right -> release runs the 3rd active entry (spellbook)
+db = load(nil)
+cursor[1], cursor[2] = 500, 400
+ns.Wheel.Open(1)
 local wheel
 for _, f in ipairs(frames) do if f.scripts.OnUpdate and f.scripts.OnHide then wheel = f end end
 check(wheel, "wheel frame found")
@@ -92,33 +109,95 @@ check(calls[#calls] == "binding:TOGGLESPELLBOOK", "released on slot 3 -> spellbo
 -- 5. release in the deadzone and Escape cancel do nothing
 local n = #calls
 cursor[1], cursor[2] = 500, 400
-ns.Wheel.Open()
+ns.Wheel.Open(1)
 wheel.scripts.OnUpdate(wheel, 0.016); ns.Wheel.Release()
-ns.Wheel.Open(); wheel:Hide(); ns.Wheel.Release() -- Escape hides the frame, the later key-up must be ignored
+ns.Wheel.Open(1); wheel:Hide(); ns.Wheel.Release() -- Escape hides the frame, the later key-up must be ignored
 check(#calls == n, "cancel paths run nothing")
 
--- 6. reset keeps keyInit, restores defaults
-db.keyInit = true; db.radius = 999; db.enabled.character = false
-ns.ResetDB()
-check(db.radius == 110 and db.enabled.character and db.keyInit, "reset restores defaults, keeps keyInit")
+-- 5b. left click confirms the pointed option
+n = #calls
+cursor[1], cursor[2] = 500, 400
+ns.Wheel.Open(1); cursor[1], cursor[2] = 600, 400
+wheel.scripts.OnUpdate(wheel, 0.016)
+mouseDown.LeftButton = true
+wheel.scripts.OnUpdate(wheel, 0.016)
+mouseDown.LeftButton = nil
+check(#calls == n + 1 and calls[#calls] == "binding:TOGGLESPELLBOOK", "left click runs the pointed option")
 
--- 6b. no binding for this client -> falls back to the function; neither -> says so
+-- 5c. key-up failsafe: key seen held, then gone -> releases without the "up" event
+n = #calls
+cursor[1], cursor[2] = 500, 400
+ns.Wheel.Open(1); cursor[1], cursor[2] = 600, 400
+keyDown.Q = true
+wheel.scripts.OnUpdate(wheel, 0.016)
+keyDown.Q = nil
+wheel.scripts.OnUpdate(wheel, 0.016)
+check(#calls == n + 1 and not wheel:IsShown(), "released by polling the key")
+ns.Wheel.Open(1); wheel.scripts.OnUpdate(wheel, 0.016) -- never seen held (IsKeyDown unreliable) -> stays open
+check(wheel:IsShown(), "unarmed failsafe keeps the wheel open")
+ns.Wheel.Cancel()
+
+-- 6. profiles: copy, independent edits, missing wheel, delete
+ns.NewProfile(2, db.profiles[1])
+check(db.profiles[2].name == "Rueda 2" and #db.profiles[2].items == 10, "profile 2 is a copy")
+db.profiles[2].items[1].on = false
+check(#ns.GetActive(2) == 7 and #ns.GetActive(1) == 8, "profiles are independent")
+ns.Wheel.Open(3)
+check(printed[#printed]:find("rueda 3 no existe"), "opening a missing wheel says so")
+db.selected = 2
+ns.DeleteProfile(1)
+check(db.profiles[1], "wheel 1 cannot be deleted")
+ns.DeleteProfile(2)
+check(db.profiles[2] == nil and db.selected == 1, "wheel 2 deleted, selection back to 1")
+
+-- 7. custom entries: shared pool, on only in the chosen wheel, run through chat / RunScript
+ns.NewProfile(2, db.profiles[1])
+local id = ns.AddCustom("Bailar", "INV_Misc_Note_01", "/dance", 2)
+check(#db.profiles[1].items == 11 and not db.profiles[1].items[11].on and db.profiles[2].items[11].on, "custom listed everywhere, on only in wheel 2")
+check(ns.GetActive(2)[#ns.GetActive(2)].id == id and #ns.GetActive(1) == 8, "custom shows in wheel 2 only")
+ns.Run(db.custom[id])
+check(calls[#calls] == "chat:/dance", "emote goes through the chat edit box")
+local id2 = ns.AddCustom("Script", nil, "/run Foo()", 1)
+ns.Run(db.custom[id2])
+check(calls[#calls] == "script:Foo()", "/run goes through RunScript")
+ns.Run({ name = "Vacia", custom = true, command = "  " })
+check(printed[#printed]:find("no tiene comando"), "empty command reported")
+check(ns.IconPath(nil):find("QuestionMark") and ns.IconPath("Spell_Nature_Heal") == "Interface\\Icons\\Spell_Nature_Heal"
+	and ns.IconPath("12345") == 12345 and ns.IconPath("Interface\\Icons\\X") == "Interface\\Icons\\X", "icon paths")
+ns.DeleteCustom(id)
+check(not db.custom[id] and #db.profiles[1].items == 11 and #db.profiles[2].items == 11, "custom removed from every wheel")
+
+-- 7b. slot cap
+for i = 1, 20 do ns.AddCustom("x" .. i, nil, "/x", 1) end
+for _, it in ipairs(db.profiles[1].items) do it.on = true end
+check(#ns.GetActive(1) == ns.MAX_SLOTS, "a wheel never exceeds MAX_SLOTS")
+
+-- 8. reset: appearance + selected wheel's options back to defaults; wheels and customs stay
+db.radius = 999; db.profiles[1].items[1].on = false; db.keyInit = true
+db.selected = 1
+ns.ResetDB()
+check(db.radius == 110 and db.profiles[1].items[1].on and db.keyInit, "reset restores defaults, keeps keyInit")
+check(db.profiles[2] and db.custom[id2] and #db.profiles[1].items == 10 + 21, "reset keeps wheels and custom entries")
+
+-- 9. a failing action is reported, not thrown; no route says so; fallbacks
+Boom = function() error("boom") end
+ns.Run({ name = "X", bind = {}, fn = { { "Boom" } } })
+check(printed[#printed]:find("No se pudo abrir X"), "action error printed")
+ns.Run({ name = "Y", bind = {}, fn = { { "Nope" } } })
+check(printed[#printed]:find("no est"), "unavailable reported")
 BINDING_NAME_TOGGLEQUESTLOG = nil
 ToggleQuestLog = function() calls[#calls + 1] = "fn:ToggleQuestLog" end
 ns.Run(ns.CatalogByID.quests)
-check(calls[#calls] == "fn:ToggleQuestLog", "fallback to function")
-ToggleQuestLog = nil
-ns.Run(ns.CatalogByID.quests)
-check(printed[#printed]:find("no est"), "unavailable reported")
+check(calls[#calls] == "fn:ToggleQuestLog", "fallback to function when the binding is missing")
 PlayerSpellsUtil = { ToggleClassTalentOrSpecFrame = function() calls[#calls + 1] = "fn:talents" end }
 BINDING_NAME_TOGGLETALENTS = nil
 ns.Run(ns.CatalogByID.talents)
 check(calls[#calls] == "fn:talents", "dotted function path resolved")
 ns.Check()
 
--- 7. a failing action is reported, not thrown
-Boom = function() error("boom") end
-ns.Run({ name = "X", bind = {}, fn = { { "Boom" } } })
-check(printed[#printed]:find("No se pudo abrir X"), "action error printed")
+-- 10. the config window builds and refreshes against the mock without errors
+ns.Config.Toggle()
+check(QuickWheelConfig, "config frame created")
+QuickWheelConfig.scripts.OnShow(QuickWheelConfig)
 
 print("ok")

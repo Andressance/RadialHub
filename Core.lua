@@ -4,11 +4,18 @@
 -- los textos de BINDING_*, SLASH_*, y los marcos con nombre QuickWheelFrame / QuickWheelConfig (para Escape).
 local addonName, ns = ...
 
-BINDING_HEADER_QUICKWHEEL = "QuickWheel"
-BINDING_NAME_QUICKWHEEL_TOGGLE = "Abrir rueda (mantener pulsada)"
+-- Hasta 4 ruedas (perfiles), cada una con su propio atajo (Bindings.xml).
+ns.MAX_PROFILES = 4
+ns.MAX_SLOTS = 16 -- opciones máximas activas por rueda
+ns.BINDINGS = { "QUICKWHEEL_TOGGLE", "QUICKWHEEL_TOGGLE2", "QUICKWHEEL_TOGGLE3", "QUICKWHEEL_TOGGLE4" }
 
-local BINDING = "QUICKWHEEL_TOGGLE"
-local DEFAULT_KEY = "ALT-Q" -- solo se asigna una vez y si está libre
+BINDING_HEADER_QUICKWHEEL = "QuickWheel"
+BINDING_NAME_QUICKWHEEL_TOGGLE = "Abrir rueda 1 (mantener pulsada)"
+BINDING_NAME_QUICKWHEEL_TOGGLE2 = "Abrir rueda 2 (mantener pulsada)"
+BINDING_NAME_QUICKWHEEL_TOGGLE3 = "Abrir rueda 3 (mantener pulsada)"
+BINDING_NAME_QUICKWHEEL_TOGGLE4 = "Abrir rueda 4 (mantener pulsada)"
+
+local DEFAULT_KEY = "ALT-Q" -- solo se asigna una vez, a la rueda 1, y si está libre
 
 function ns.Print(msg)
 	DEFAULT_CHAT_FRAME:AddMessage("|cffffd100QuickWheel|r: " .. msg)
@@ -90,38 +97,81 @@ ns.Presets = {
 	{ name = "Blanco",       1.00, 1.00, 1.00 },
 }
 
--- Ruta que usará la entrada en este cliente: "binding", nombre  |  "fn", nombre, función, args  |  nil.
-local function Resolve(entry)
+-- Icono de una entrada: ruta completa, ID numérico o nombre dentro de Interface\Icons.
+function ns.IconPath(icon)
+	if not icon or icon == "" then return ICON .. "INV_Misc_QuestionMark" end
+	if tonumber(icon) then return tonumber(icon) end
+	if icon:find("[\\/]") then return icon end
+	return ICON .. icon
+end
+
+-- Entrada propia: emotes, /run <código Lua> y comandos de otros addons. Blizzard bloquea /cast y /use a los addons.
+local function RunCommand(entry)
+	local text = strtrim(entry.command or "")
+	if text == "" then ns.Print(entry.name .. ": no tiene comando (edítala en /qw)."); return end
+	local cmd, code = text:match("^/(%a+)%s+(.*)$")
+	local ok, err
+	if cmd and (strlower(cmd) == "run" or strlower(cmd) == "script") then
+		ok, err = pcall(RunScript, code)
+	else
+		local box = DEFAULT_CHAT_FRAME.editBox
+		box:SetText(text)
+		ok, err = pcall(ChatEdit_SendText, box, 0)
+		box:SetText("")
+	end
+	if not ok then ns.Print("Error en " .. entry.name .. ": " .. tostring(err)) end
+end
+
+-- Rutas posibles de la entrada en este cliente, por orden: atajos nativos que existen y luego funciones.
+local function Routes(entry)
+	local routes = {}
 	for _, b in ipairs(entry.bind) do
-		if _G["BINDING_NAME_" .. b] then return "binding", b end
+		if _G["BINDING_NAME_" .. b] then
+			routes[#routes + 1] = { label = "binding " .. b, run = function() RunBinding(b) end }
+		end
 	end
 	for _, spec in ipairs(entry.fn) do
 		local f = _G
 		for part in spec[1]:gmatch("[^.]+") do f = type(f) == "table" and f[part] or nil end
-		if type(f) == "function" then return "fn", spec[1], f, spec end
+		if type(f) == "function" then
+			routes[#routes + 1] = { label = "fn " .. spec[1], run = function() f(unpack(spec, 2)) end }
+		end
 	end
+	return routes
 end
 
+-- Prueba cada ruta hasta que una no falle; /qw debug muestra cuál se usó.
 function ns.Run(entry)
-	local kind, what, f, spec = Resolve(entry)
-	if not kind then
-		ns.Print(entry.name .. " no está disponible en este cliente (/qw check para ver el detalle).")
-		return
+	if entry.custom then return RunCommand(entry) end
+	local routes, err = Routes(entry)
+	for _, route in ipairs(routes) do
+		local ok, e = pcall(route.run)
+		if ok then
+			if ns.debug then ns.Print(entry.name .. " -> " .. route.label) end
+			return
+		end
+		err = e
 	end
-	local ok, err
-	if kind == "binding" then ok, err = pcall(RunBinding, what) else ok, err = pcall(f, unpack(spec, 2)) end
-	if not ok then ns.Print("No se pudo abrir " .. entry.name .. ": " .. tostring(err)) end
+	if err then
+		ns.Print("No se pudo abrir " .. entry.name .. ": " .. tostring(err))
+	else
+		ns.Print(entry.name .. " no está disponible en este cliente (/qw check para ver el detalle).")
+	end
 end
 
 function ns.Check()
 	for _, entry in ipairs(ns.Catalog) do
-		local kind, what = Resolve(entry)
-		ns.Print(entry.name .. ": " .. (kind and (kind .. " " .. what) or "|cffff4040NO DISPONIBLE|r"))
+		local route = Routes(entry)[1]
+		ns.Print(entry.name .. ": " .. (route and route.label or "|cffff4040NO DISPONIBLE|r"))
 	end
 end
 
 ----------------------------------------------------------------------------------------------------
 -- QuickWheelDB
+--   (aspecto global) radius, iconSize, deadzone, bgAlpha, accent, sound, anim
+--   profiles[1..4] = { name, items = { { id, on }... } }   -- una por rueda; puede haber huecos
+--   custom[id]     = { id, name, icon, command, custom = true }   -- entradas propias (comunes a todas las ruedas)
+--   selected       = rueda que muestra la ventana de configuración
 ----------------------------------------------------------------------------------------------------
 local defaults = {
 	radius   = 110,   -- distancia de los iconos al centro
@@ -132,64 +182,121 @@ local defaults = {
 	sound    = true,
 	anim     = true,
 }
+local APPEARANCE = { "radius", "iconSize", "deadzone", "bgAlpha", "accent", "sound", "anim" }
 
--- Rellena huecos y sincroniza order/enabled con el catálogo (ids nuevos al final, ids borrados fuera).
+function ns.Entry(id) return ns.CatalogByID[id] or ns.db.custom[id] end
+
+-- Mantiene los items de una rueda al día: sin ids borrados, con los integrados y propios que falten al final.
+local function Sync(profile, db)
+	local seen, items = {}, {}
+	for _, it in ipairs(profile.items) do
+		if (ns.CatalogByID[it.id] or db.custom[it.id]) and not seen[it.id] then seen[it.id] = true; items[#items + 1] = it end
+	end
+	for _, entry in ipairs(ns.Catalog) do
+		if not seen[entry.id] then items[#items + 1] = { id = entry.id, on = entry.default } end
+	end
+	local ids = {}
+	for id in pairs(db.custom) do if not seen[id] then ids[#ids + 1] = id end end
+	table.sort(ids)
+	for _, id in ipairs(ids) do items[#items + 1] = { id = id, on = false } end
+	profile.items = items
+end
+
 local function Fill(db)
 	for k, v in pairs(defaults) do
 		if db[k] == nil then db[k] = type(v) == "table" and { unpack(v) } or v end
 	end
-	db.enabled = db.enabled or {}
-	local seen, order = {}, {}
-	for _, id in ipairs(db.order or {}) do
-		if ns.CatalogByID[id] and not seen[id] then seen[id] = true; order[#order + 1] = id end
+	db.custom = db.custom or {}
+	if not db.profiles then -- migración desde la versión de una sola rueda (order/enabled)
+		local items = {}
+		for _, id in ipairs(db.order or {}) do items[#items + 1] = { id = id, on = db.enabled and db.enabled[id] or false } end
+		db.profiles = { { name = "Rueda 1", items = items } }
+		db.order, db.enabled = nil, nil
 	end
-	for _, entry in ipairs(ns.Catalog) do
-		if not seen[entry.id] then order[#order + 1] = entry.id end
-		if db.enabled[entry.id] == nil then db.enabled[entry.id] = entry.default end
+	db.profiles[1] = db.profiles[1] or { name = "Rueda 1", items = {} }
+	for i = 1, ns.MAX_PROFILES do
+		if db.profiles[i] then Sync(db.profiles[i], db) end
 	end
-	db.order = order
+	if not (db.selected and db.profiles[db.selected]) then db.selected = 1 end
 end
 
+-- Aspecto y opciones de la rueda seleccionada vuelven a los valores de fábrica; ruedas y entradas propias se conservan.
 function ns.ResetDB()
-	local keyInit = ns.db.keyInit -- el atajo por defecto solo se intenta una vez en la vida de la instalación
-	wipe(ns.db)
-	ns.db.keyInit = keyInit
-	Fill(ns.db)
+	local db = ns.db
+	for _, k in ipairs(APPEARANCE) do db[k] = nil end
+	db.profiles[db.selected].items = {}
+	Fill(db)
 end
 
--- Entradas del catálogo activas, en el orden elegido por el jugador.
-function ns.GetActive()
+-- Rueda i nueva como copia de la rueda src.
+function ns.NewProfile(i, src)
+	local items = {}
+	for _, it in ipairs(src.items) do items[#items + 1] = { id = it.id, on = it.on } end
+	ns.db.profiles[i] = { name = "Rueda " .. i, items = items }
+end
+
+function ns.DeleteProfile(i)
+	if i == 1 then return end -- la 1 es la rueda base
+	ns.db.profiles[i] = nil
+	ns.ClearKey(i)
+	if ns.db.selected == i then ns.db.selected = 1 end
+end
+
+function ns.AddCustom(name, icon, command, profile)
+	local db = ns.db
+	db.nextId = (db.nextId or 0) + 1
+	local id = "c" .. db.nextId
+	db.custom[id] = { id = id, name = name, icon = icon, command = command, custom = true }
+	for i = 1, ns.MAX_PROFILES do
+		local p = db.profiles[i]
+		if p then p.items[#p.items + 1] = { id = id, on = (i == profile) } end
+	end
+	return id
+end
+
+function ns.DeleteCustom(id)
+	ns.db.custom[id] = nil
+	for i = 1, ns.MAX_PROFILES do
+		if ns.db.profiles[i] then Sync(ns.db.profiles[i], ns.db) end
+	end
+end
+
+-- Entradas activas de la rueda i, en su orden (nil si esa rueda no existe).
+function ns.GetActive(i)
+	local p = ns.db.profiles[i]
+	if not p then return nil end
 	local list = {}
-	for _, id in ipairs(ns.db.order) do
-		if ns.db.enabled[id] then list[#list + 1] = ns.CatalogByID[id] end
+	for _, it in ipairs(p.items) do
+		if it.on and #list < ns.MAX_SLOTS then list[#list + 1] = ns.Entry(it.id) end
 	end
 	return list
 end
 
 ----------------------------------------------------------------------------------------------------
--- Atajo de teclado (SetBinding + SaveBindings; el cliente lo bloquea en combate)
+-- Atajos de teclado (SetBinding + SaveBindings; el cliente los bloquea en combate). i = nº de rueda.
 ----------------------------------------------------------------------------------------------------
-function ns.BindKey(key)
+function ns.BindKey(key, i)
 	if InCombatLockdown() then ns.Print("No se puede cambiar el atajo en combate."); return false end
+	local binding = ns.BINDINGS[i]
 	local prev = GetBindingAction(key)
-	for _, old in ipairs({ GetBindingKey(BINDING) }) do SetBinding(old) end
-	if not SetBinding(key, BINDING) then return false end
+	for _, old in ipairs({ GetBindingKey(binding) }) do SetBinding(old) end
+	if not SetBinding(key, binding) then return false end
 	SaveBindings(GetCurrentBindingSet())
-	if prev and prev ~= "" and prev ~= BINDING then
-		ns.Print(GetBindingText(key, "KEY_") .. " estaba asignada a " .. (_G["BINDING_NAME_" .. prev] or prev) .. "; ahora abre la rueda.")
+	if prev and prev ~= "" and prev ~= binding then
+		ns.Print(GetBindingText(key, "KEY_") .. " estaba asignada a " .. (_G["BINDING_NAME_" .. prev] or prev) .. "; ahora abre la rueda " .. i .. ".")
 	end
 	return true
 end
 
-function ns.ClearKey()
+function ns.ClearKey(i)
 	if InCombatLockdown() then ns.Print("No se puede cambiar el atajo en combate."); return end
-	for _, old in ipairs({ GetBindingKey(BINDING) }) do SetBinding(old) end
+	for _, old in ipairs({ GetBindingKey(ns.BINDINGS[i]) }) do SetBinding(old) end
 	SaveBindings(GetCurrentBindingSet())
 end
 
--- Lo llama Bindings.xml: "down" abre la rueda, "up" ejecuta la opción apuntada.
-function QuickWheel_OnKey(keystate)
-	if keystate == "down" then ns.Wheel.Open() else ns.Wheel.Release() end
+-- Lo llama Bindings.xml: "down" abre la rueda i, "up" ejecuta la opción apuntada.
+function QuickWheel_OnKey(keystate, i)
+	if keystate == "down" then ns.Wheel.Open(i) else ns.Wheel.Release() end
 end
 
 ----------------------------------------------------------------------------------------------------
@@ -206,9 +313,9 @@ events:SetScript("OnEvent", function(_, event, arg1)
 	elseif event == "PLAYER_LOGIN" and not ns.db.keyInit then
 		ns.db.keyInit = true
 		local action = GetBindingAction(DEFAULT_KEY)
-		if not GetBindingKey(BINDING) and (not action or action == "") and ns.BindKey(DEFAULT_KEY) then
+		if not GetBindingKey(ns.BINDINGS[1]) and (not action or action == "") and ns.BindKey(DEFAULT_KEY, 1) then
 			ns.Print("listo: mantén " .. DEFAULT_KEY .. " para abrir la rueda. /qw para configurarla.")
-		elseif not GetBindingKey(BINDING) then
+		elseif not GetBindingKey(ns.BINDINGS[1]) then
 			ns.Print("escribe /qw para asignar la tecla de la rueda.")
 		end
 	end
@@ -217,5 +324,10 @@ end)
 SLASH_QUICKWHEEL1 = "/qw"
 SLASH_QUICKWHEEL2 = "/quickwheel"
 SlashCmdList["QUICKWHEEL"] = function(msg)
-	if strlower(strtrim(msg or "")) == "check" then ns.Check() else ns.Config.Toggle() end
+	local cmd = strlower(strtrim(msg or ""))
+	if cmd == "check" then ns.Check()
+	elseif cmd == "debug" then
+		ns.debug = not ns.debug
+		ns.Print("depuración " .. (ns.debug and "activada" or "desactivada"))
+	else ns.Config.Toggle() end
 end

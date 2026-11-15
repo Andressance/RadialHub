@@ -9,7 +9,7 @@ local TWO_PI = pi * 2
 local FONT = STANDARD_TEXT_FONT or "Fonts\\FRIZQT__.TTF"
 local SOUND_TICK = SOUNDKIT and SOUNDKIT.U_CHAT_SCROLL_BUTTON or 1115               -- al cambiar de opción
 local SOUND_PICK = SOUNDKIT and SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_ON or 856      -- al activar una
-local DOTS = 6          -- puntos del indicador direccional
+local DOTS = 18         -- discos solapados que forman el rayo hacia la opción apuntada
 local OPEN_TIME = 0.12  -- segundos de la animación de apertura
 
 -- Ángulo (radianes, convención matemática) del hueco i de n: el 1 arriba y el resto en sentido horario.
@@ -31,6 +31,23 @@ local ox, oy = 0, 0                -- centro de la rueda en coordenadas de UIPar
 local R, S, dead = 0, 0, 0         -- radio, tamaño de icono, zona muerta (ya acotados)
 local ar, ag, ab = 1, 1, 1         -- color de acento
 local openT, ia, indA = 0, 0, 0    -- progreso de apertura, ángulo e intensidad del indicador
+local armed, wasClick = false, false -- failsafe de tecla soltada / clic izquierdo previo
+local heldKeys = {}                -- teclas físicas del atajo (sin modificadores) para saber si sigue pulsado
+
+local MOUSE = { BUTTON1 = "LeftButton", BUTTON2 = "RightButton", BUTTON3 = "MiddleButton", BUTTON4 = "Button4", BUTTON5 = "Button5" }
+
+-- ¿Sigue pulsada alguna tecla del atajo? nil si este cliente no puede saberlo.
+local function KeyHeld()
+	if #heldKeys == 0 then return nil end
+	for _, k in ipairs(heldKeys) do
+		if MOUSE[k] then
+			if IsMouseButtonDown(MOUSE[k]) then return true end
+		elseif IsKeyDown(k) then
+			return true
+		end
+	end
+	return false
+end
 
 local function Disc(parent, layer, r, g, b, a)
 	local t = parent:CreateTexture(nil, layer)
@@ -44,6 +61,19 @@ local function SizeDisc(t, d) t:SetWidth(d); t:SetHeight(d) end
 local function OnUpdate(_, dt)
 	dt = min(dt, 0.05)
 	if IsMouseButtonDown("RightButton") then Wheel.Cancel() return end
+
+	-- Failsafe: si el cliente no entrega el "up" (p. ej. se soltó ALT antes que la tecla), lo detectamos aquí.
+	-- Solo se arma tras ver la tecla pulsada, así que si IsKeyDown no sirve no molesta.
+	local held = KeyHeld()
+	if held then armed = true elseif held == false and armed then Wheel.Release() return end
+
+	-- Clic izquierdo: confirma la opción apuntada (o cancela si estás en el centro).
+	local click = IsMouseButtonDown("LeftButton")
+	if click and not wasClick then
+		if selected then Wheel.Release() else Wheel.Cancel() end
+		return
+	end
+	wasClick = click
 
 	local anim, n = db.anim, #list
 	openT = anim and min(1, openT + dt / OPEN_TIME) or 1
@@ -96,14 +126,29 @@ local function OnUpdate(_, dt)
 	end
 	local indT = selected and 1 or 0
 	indA = anim and Lerp(indA, indT, min(1, dt * 14)) or indT
-	local r0 = dead + 8
-	local r1 = max(r0 + 12, R * e - S * 0.625 - 6)
+	local r0 = dead + 4
+	local r1 = max(r0 + 12, R * e - S * 0.625 - 2)
 	for j = 1, DOTS do
 		local f = (j - 0.5) / DOTS
 		local d = dots[j]
 		local rr = Lerp(r0, r1, f)
 		d:SetPoint("CENTER", frame, "CENTER", cos(ia) * rr, sin(ia) * rr)
-		d:SetVertexColor(ar, ag, ab, indA * (0.2 + 0.7 * f))
+		d:SetVertexColor(ar, ag, ab, indA * 0.9 * f * f) -- se apaga hacia el centro
+	end
+	coreRing:SetVertexColor(ar, ag, ab, 0.55 + 0.45 * indA) -- el aro central se enciende al apuntar
+end
+
+local function EnsureSlots(n)
+	while #slots < n do
+		local b = CreateFrame("Frame", nil, frame)
+		b.h = 0
+		b.ring = Disc(b, "BACKGROUND", 1, 1, 1, 1)
+		b.dark = Disc(b, "BORDER", 0.05, 0.05, 0.07, 0.95)
+		b.icon = b:CreateTexture(nil, "ARTWORK")
+		b.glow = Disc(b, "OVERLAY", 1, 1, 1, 0)
+		b.glow:SetBlendMode("ADD")
+		for _, t in ipairs({ b.ring, b.dark, b.icon, b.glow }) do t:SetPoint("CENTER", b, "CENTER", 0, 0) end
+		slots[#slots + 1] = b
 	end
 end
 
@@ -130,21 +175,11 @@ local function Build()
 	dots = {}
 	for j = 1, DOTS do
 		dots[j] = Disc(dotFrame, "ARTWORK", 1, 1, 1, 0)
-		SizeDisc(dots[j], 4 + 3 * (j - 0.5) / DOTS)
+		dots[j]:SetBlendMode("ADD")
+		SizeDisc(dots[j], 3 + 7 * (j - 0.5) / DOTS) -- rayo que se ensancha hacia la opción
 	end
 
-	slots = {}
-	for i = 1, #ns.Catalog do
-		local b = CreateFrame("Frame", nil, frame)
-		b.h = 0
-		b.ring = Disc(b, "BACKGROUND", 1, 1, 1, 1)
-		b.dark = Disc(b, "BORDER", 0.05, 0.05, 0.07, 0.95)
-		b.icon = b:CreateTexture(nil, "ARTWORK")
-		b.glow = Disc(b, "OVERLAY", 1, 1, 1, 0)
-		b.glow:SetBlendMode("ADD")
-		for _, t in ipairs({ b.ring, b.dark, b.icon, b.glow }) do t:SetPoint("CENTER", b, "CENTER", 0, 0) end
-		slots[i] = b
-	end
+	slots = {} -- se crean al abrir, según las opciones de la rueda (EnsureSlots)
 
 	frame:SetScript("OnUpdate", OnUpdate)
 	frame:SetScript("OnHide", function() active, selected = false, nil end)
@@ -153,12 +188,16 @@ local function Build()
 end
 
 -- Tecla pulsada: coloca la rueda centrada en el cursor.
-function Wheel.Open()
+function Wheel.Open(profile)
 	if active then return end
+	profile = profile or 1
 	db = ns.db
-	list = ns.GetActive()
-	if #list == 0 then ns.Print("no hay opciones activas. Usa /qw para activarlas."); return end
+	local entries = ns.GetActive(profile)
+	if not entries then ns.Print("la rueda " .. profile .. " no existe. Créala en /qw."); return end
+	if #entries == 0 then ns.Print("la rueda " .. profile .. " no tiene opciones activas. Usa /qw para activarlas."); return end
+	list = entries
 	Build()
+	EnsureSlots(#list)
 
 	S = db.iconSize
 	R = db.radius
@@ -179,7 +218,7 @@ function Wheel.Open()
 		if entry then
 			b:SetWidth(S); b:SetHeight(S)
 			SizeDisc(b.ring, S); SizeDisc(b.dark, S - 4); SizeDisc(b.icon, S - 8); SizeDisc(b.glow, S - 4)
-			if b.entry ~= entry then ns.Circle(b.icon, entry.icon); b.entry = entry end
+			if b.entry ~= entry then ns.Circle(b.icon, ns.IconPath(entry.icon)); b.entry = entry end
 			b.h = 0
 			b:Show()
 		else
@@ -193,6 +232,12 @@ function Wheel.Open()
 	frame:ClearAllPoints()
 	frame:SetPoint("CENTER", UIParent, "BOTTOMLEFT", ox, oy)
 	frame:SetAlpha(0)
+	heldKeys = {}
+	for _, key in ipairs({ GetBindingKey(ns.BINDINGS[profile]) }) do
+		local base = key:match("[^-]+$") -- quita ALT-/CTRL-/SHIFT-
+		if base and base ~= "" and (MOUSE[base] or IsKeyDown) then heldKeys[#heldKeys + 1] = base end
+	end
+	armed, wasClick = false, IsMouseButtonDown("LeftButton")
 	openT, indA, selected, active = db.anim and 0 or 1, 0, nil, true
 	frame:Show()
 end
@@ -201,6 +246,7 @@ end
 function Wheel.Release()
 	if not active then return end
 	local entry = selected and list[selected]
+	if ns.debug then ns.Print("soltar: " .. (entry and entry.name or "nada seleccionado")) end
 	frame:Hide()
 	if entry then
 		if db.sound then PlaySound(SOUND_PICK) end

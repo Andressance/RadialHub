@@ -1,6 +1,15 @@
 <Bindings>
-	<!-- Textos en español: BINDING_HEADER_QUICKWHEEL y BINDING_NAME_QUICKWHEEL_TOGGLE se definen en Core.lua -->
+	<!-- Una rueda (perfil) por atajo. Textos en español: BINDING_* se definen en Core.lua -->
 	<Binding name="QUICKWHEEL_TOGGLE" header="QUICKWHEEL" runOnUp="true">
-		QuickWheel_OnKey(keystate)
+		QuickWheel_OnKey(keystate, 1)
+	</Binding>
+	<Binding name="QUICKWHEEL_TOGGLE2" runOnUp="true">
+		QuickWheel_OnKey(keystate, 2)
+	</Binding>
+	<Binding name="QUICKWHEEL_TOGGLE3" runOnUp="true">
+		QuickWheel_OnKey(keystate, 3)
+	</Binding>
+	<Binding name="QUICKWHEEL_TOGGLE4" runOnUp="true">
+		QuickWheel_OnKey(keystate, 4)
 	</Binding>
 </Bindings>

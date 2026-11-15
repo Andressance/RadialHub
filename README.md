@@ -14,13 +14,15 @@ Funciona nada más instalarlo: en el primer inicio asigna **ALT-Q** si esa tecla
 
 ## Configuración
 
-`/qw` o `/quickwheel` (también en *Interface Options → AddOns → QuickWheel*):
+`/qw` o `/quickwheel` (también en *Opciones → AddOns → QuickWheel*). La ventana se redimensiona desde la esquina inferior derecha.
 
+- **Ruedas:** hasta 4, cada una con su nombre, sus opciones y su propia tecla (pestañas arriba; *+ Nueva* copia la rueda actual). Así puedes tener, por ejemplo, una rueda de ventanas y otra de comandos, cada una en su tecla. La rueda 1 no se puede borrar.
 - **Atajo de teclado:** pulsa el botón y luego la tecla (admite ALT/CTRL/SHIFT y botones 3, 4 y 5 del ratón). *Quitar* lo desasigna. Escape cancela la captura. No se puede cambiar en combate.
-- **Opciones de la rueda:** activa o desactiva cada panel y reordénalo con *Subir* / *Bajar*. La 1ª opción va arriba y el resto en sentido horario.
-- **Aspecto:** radio, tamaño de iconos, zona muerta, opacidad del fondo, color de acento (4 presets o selector libre), sonidos y animación. *Restaurar valores por defecto* no toca el atajo.
+- **Opciones de la rueda:** activa o desactiva cada entrada y reordénala con *Subir* / *Bajar* (máximo 16 activas por rueda). La 1ª va arriba y el resto en sentido horario. La lista tiene scroll con la rueda del ratón.
+- **Entradas propias** (*+ Añadir comando*): nombre, icono (nombre dentro de `Interface\Icons`, ruta o ID) y una línea de comando: emotes (`/dance`), scripts (`/run ...`) y comandos de otros addons. Son comunes a todas las ruedas y se activan en cada una. **Limitación:** Blizzard bloquea `/cast`, `/use` y las macros a los addons, así que hechizos y objetos no se pueden lanzar desde aquí.
+- **Aspecto** (común a todas las ruedas): radio, tamaño de iconos, zona muerta, opacidad del fondo, color de acento (4 presets o selector libre), sonidos y animación. *Restaurar valores por defecto* devuelve el aspecto y las opciones de la rueda actual a los valores de fábrica; tus ruedas, entradas propias y atajos se conservan.
 
-Paneles disponibles: Personaje, Talentos, Libro de hechizos, Misiones, Mapa del mundo, Hermandad, Bolsas, Logros (activos por defecto), Buscador de mazmorras y Mascotas y monturas (desactivados por defecto). Añadir otro es una línea en el catálogo de `Core.lua`.
+Paneles integrados: Personaje, Talentos, Libro de hechizos, Misiones, Mapa del mundo, Hermandad, Bolsas, Logros (activos por defecto), Buscador de mazmorras y Mascotas y monturas (desactivados por defecto). Añadir otro es una entrada en el catálogo de `Core.lua`.
 
 ## Notas técnicas
 
