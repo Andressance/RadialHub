@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.6
+
+- Corregido el error de `SetCooldown` con valores secretos: el botón seguro ya no lleva un `OnClick` de addon. La pulsación mantenida se detecta desde un marco separado.
+
 ## 0.2.5
 
 - Al entrar en combate, el manejador seguro solo desactiva la acción de abrir Personaje y conserva su destino. Esto sigue el patrón probado en WoW Forever y reduce cambios innecesarios en el botón protegido.

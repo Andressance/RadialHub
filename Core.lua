@@ -9,6 +9,7 @@ ns.MAX_PROFILES = 4
 ns.MAX_SLOTS = 16 -- opciones máximas activas por rueda
 ns.BINDINGS, ns.LEGACY_BINDINGS = {}, {}
 local secureInputs = {}
+local secureCharacterSelected = {}
 
 BINDING_HEADER_RADIALHUB = "RadialHub"
 for i = 1, ns.MAX_PROFILES do
@@ -24,26 +25,18 @@ for i = 1, ns.MAX_PROFILES do
 	input:SetAttribute("*type1", nil)
 	input:SetAttribute("_onstate-rhcombat", [[if newstate == "combat" then self:SetAttribute("*type1", nil) end]])
 	RegisterStateDriver(input, "rhcombat", "[combat] combat; nocombat")
-	input:HookScript("OnClick", function(self, _, down)
-		if down then
-			ns.Wheel.Open(profile)
-		elseif self.rhCharacterSelected then
-			ns.SetSecureCharacterAction(profile, false)
-			ns.Wheel.Cancel()
-		else
-			ns.Wheel.Release()
-		end
-	end)
 	secureInputs[i] = input
 end
 
 function ns.SetSecureCharacterAction(i, enabled)
 	local input = secureInputs[i]
-	input.rhCharacterSelected = enabled and CharacterMicroButton ~= nil or false
+	secureCharacterSelected[i] = enabled and CharacterMicroButton ~= nil or false
 	if InCombatLockdown() then return end
-	input:SetAttribute("*type1", input.rhCharacterSelected and "click" or nil)
-	input:SetAttribute("*clickbutton1", input.rhCharacterSelected and CharacterMicroButton or nil)
+	input:SetAttribute("*type1", secureCharacterSelected[i] and "click" or nil)
+	input:SetAttribute("*clickbutton1", secureCharacterSelected[i] and CharacterMicroButton or nil)
 end
+
+function ns.HasSecureCharacterAction(i) return secureCharacterSelected[i] end
 
 local DEFAULT_KEY = "ALT-Q" -- solo se asigna una vez, a la rueda 1, y si está libre
 
@@ -401,6 +394,40 @@ events:SetScript("OnEvent", function(_, event, arg1)
 			ns.Print("listo: mantén " .. DEFAULT_KEY .. " para abrir la rueda. /rh para configurarla.")
 		elseif not GetBindingKey(ns.BINDINGS[1]) then
 			ns.Print("escribe /rh para asignar la tecla de la rueda.")
+		end
+	end
+end)
+
+-- SecureActionButtonTemplate must not have addon OnClick scripts: they taint Blizzard's action-button cooldown path.
+local MOUSE_BUTTONS = { BUTTON1 = "LeftButton", BUTTON2 = "RightButton", BUTTON3 = "MiddleButton", BUTTON4 = "Button4", BUTTON5 = "Button5" }
+local heldProfiles, inputMonitor = {}, CreateFrame("Frame")
+local function BoundKeyDown(key)
+	local base = key:match("[^-]+$")
+	if not base
+		or (key:find("ALT-", 1, true) ~= nil) ~= (IsAltKeyDown() and true or false)
+		or (key:find("CTRL-", 1, true) ~= nil) ~= (IsControlKeyDown() and true or false)
+		or (key:find("SHIFT-", 1, true) ~= nil) ~= (IsShiftKeyDown() and true or false) then return false end
+	local mouseButton = MOUSE_BUTTONS[base]
+	if mouseButton then return IsMouseButtonDown(mouseButton) end
+	return IsKeyDown(base)
+end
+inputMonitor:SetScript("OnUpdate", function()
+	for i = 1, ns.MAX_PROFILES do
+		local down = false
+		for _, key in ipairs({ GetBindingKey(ns.BINDINGS[i]) }) do
+			if key and BoundKeyDown(key) then down = true; break end
+		end
+		if down and not heldProfiles[i] then
+			heldProfiles[i] = true
+			ns.Wheel.Open(i)
+		elseif not down and heldProfiles[i] then
+			heldProfiles[i] = nil
+			if ns.HasSecureCharacterAction(i) then
+				ns.SetSecureCharacterAction(i, false)
+				ns.Wheel.Cancel()
+			else
+				ns.Wheel.Release()
+			end
 		end
 	end
 end)
