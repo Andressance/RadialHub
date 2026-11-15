@@ -1,4 +1,4 @@
-package-as: QuickWheel
+package-as: RadialHub
 ignore:
   - tests
   - .gitignore

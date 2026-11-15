@@ -1,6 +1,6 @@
-# QuickWheel
+# RadialHub
 
-Menú radial rápido para **WoW Forever** (Interface 16001): abre Personaje, Talentos, Bolsas, Mapa... sin buscar botones ni memorizar atajos.
+Menú radial rápido para **WoW Forever** (probado) y, de forma experimental, Retail y Classic: abre Personaje, Talentos, Bolsas, Mapa... sin buscar botones ni memorizar atajos.
 
 1. **Mantén** la tecla: la rueda aparece centrada en el cursor.
 2. **Mueve el ratón** hacia una opción: crece, se ilumina con el color de acento y su nombre aparece en el centro. En el centro (zona muerta) no hay nada seleccionado ("Cancelar").
@@ -8,13 +8,15 @@ Menú radial rápido para **WoW Forever** (Interface 16001): abre Personaje, Tal
 
 ## Instalación
 
-Copia la carpeta a `World of Warcraft/_forever_/Interface/AddOns/QuickWheel` (el nombre de la carpeta debe ser `QuickWheel`) y reinicia el cliente. Si ves un panel que no abre, escribe `/qw check`: lista la ruta que usa cada opción en tu cliente (o "NO DISPONIBLE").
+Descomprime el zip (o copia la carpeta) en `World of Warcraft/_forever_/Interface/AddOns/RadialHub` y reinicia el cliente. La carpeta debe llamarse `RadialHub`. En Retail o Classic, usa `_retail_`, `_classic_` o `_classic_era_` en lugar de `_forever_`.
 
-Funciona nada más instalarlo: en el primer inicio asigna **ALT-Q** si esa tecla está libre (si no, te avisa para que elijas otra con `/qw`).
+Funciona nada más instalarlo: en el primer inicio asigna **ALT-Q** a la rueda 1 si esa tecla está libre (si no, te avisa para que elijas otra con `/rh`).
+
+Las opciones que no existan en tu cliente (por ejemplo Logros en Forever o en Classic Era) se ocultan solas. Si ves un panel que no abre, escribe `/rh check`: lista la ruta que usa cada opción en tu cliente (o "NO DISPONIBLE").
 
 ## Configuración
 
-`/qw` o `/quickwheel` (también en *Opciones → AddOns → QuickWheel*). La ventana se redimensiona desde la esquina inferior derecha.
+`/rh` o `/radialhub` (también en *Opciones → AddOns → RadialHub*). La ventana se redimensiona desde la esquina inferior derecha.
 
 - **Ruedas:** hasta 4, cada una con su nombre, sus opciones y su propia tecla (pestañas arriba; *+ Nueva* copia la rueda actual). Así puedes tener, por ejemplo, una rueda de ventanas y otra de comandos, cada una en su tecla. La rueda 1 no se puede borrar.
 - **Atajo de teclado:** pulsa el botón y luego la tecla (admite ALT/CTRL/SHIFT y botones 3, 4 y 5 del ratón). *Quitar* lo desasigna. Escape cancela la captura. No se puede cambiar en combate.
@@ -26,8 +28,8 @@ Paneles integrados: Personaje, Talentos, Libro de hechizos, Misiones, Mapa del m
 
 ## Notas técnicas
 
-- Cada opción prueba las funciones del propio juego (`ToggleCharacter`...) y, si no existen, su atajo nativo (`RunBinding`); ver el catálogo en `Core.lua`. `/qw check` muestra la ruta de cada una y `/qw debug` la que se usa al soltar.
-- Círculos con máscara redonda (`CreateMaskTexture`), animación con `OnUpdate`, ajustes en `QuickWheelDB` (SavedVariables). Código en un namespace privado; los únicos globales son los que exige el cliente.
+- Cada opción usa la ruta disponible en el cliente; Personaje se activa mediante un botón seguro al soltar la tecla para evitar contaminar la interfaz protegida. `/rh check` muestra las rutas y `/rh debug` cuál se usó al soltar.
+- Círculos con máscara redonda (`CreateMaskTexture`), animación con `OnUpdate`, ajustes en `RadialHubDB` (SavedVariables). Código en un namespace privado; los únicos globales son los que exige el cliente.
 - Pruebas de la lógica con el API simulado: `lua tests/test.lua` (desde la raíz del repo).
 
 ## Licencia

@@ -1,0 +1,12 @@
+## Interface: 11508, 11509, 16001, 20505, 20506, 30405, 38002, 40402, 50503, 50504, 120100, 120105, 120107
+## Title: RadialHub
+## Notes: Menú radial rápido: mantén una tecla, apunta con el ratón y suelta para abrir Personaje, Talentos, Bolsas, Mapa...
+## Author: Andressance
+## Version: 0.2.5
+## SavedVariables: RadialHubDB
+## X-License: MIT
+## X-Website: https://github.com/Andressance/RadialHub
+
+Core.lua
+Wheel.lua
+Config.lua

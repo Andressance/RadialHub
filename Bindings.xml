@@ -1,15 +1,19 @@
 <Bindings>
-	<!-- Una rueda (perfil) por atajo. Textos en español: BINDING_* se definen en Core.lua -->
-	<Binding name="QUICKWHEEL_TOGGLE" header="QUICKWHEEL" runOnUp="true">
-		QuickWheel_OnKey(keystate, 1)
+	<!-- Acciones antiguas ocultas: conservan la asignación para migrarla a SetBindingClick. -->
+	<Binding name="RADIALHUB_TOGGLE" hidden="true" runOnUp="true">
+		RadialHub_OnKey(keystate, 1)
 	</Binding>
-	<Binding name="QUICKWHEEL_TOGGLE2" runOnUp="true">
-		QuickWheel_OnKey(keystate, 2)
+	<Binding name="RADIALHUB_TOGGLE2" hidden="true" runOnUp="true">
+		RadialHub_OnKey(keystate, 2)
 	</Binding>
-	<Binding name="QUICKWHEEL_TOGGLE3" runOnUp="true">
-		QuickWheel_OnKey(keystate, 3)
+	<Binding name="RADIALHUB_TOGGLE3" hidden="true" runOnUp="true">
+		RadialHub_OnKey(keystate, 3)
 	</Binding>
-	<Binding name="QUICKWHEEL_TOGGLE4" runOnUp="true">
-		QuickWheel_OnKey(keystate, 4)
+	<Binding name="RADIALHUB_TOGGLE4" hidden="true" runOnUp="true">
+		RadialHub_OnKey(keystate, 4)
 	</Binding>
+	<Binding name="QUICKWHEEL_TOGGLE" hidden="true" runOnUp="true">QuickWheel_OnKey(keystate, 1)</Binding>
+	<Binding name="QUICKWHEEL_TOGGLE2" hidden="true" runOnUp="true">QuickWheel_OnKey(keystate, 2)</Binding>
+	<Binding name="QUICKWHEEL_TOGGLE3" hidden="true" runOnUp="true">QuickWheel_OnKey(keystate, 3)</Binding>
+	<Binding name="QUICKWHEEL_TOGGLE4" hidden="true" runOnUp="true">QuickWheel_OnKey(keystate, 4)</Binding>
 </Bindings>

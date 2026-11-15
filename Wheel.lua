@@ -1,4 +1,4 @@
--- QuickWheel · Wheel: geometría polar, modal en el cursor, animación (lerp en OnUpdate) y ejecución al soltar.
+-- RadialHub · Wheel: geometría polar, modal en el cursor, animación (lerp en OnUpdate) y ejecución al soltar.
 -- Círculos nítidos con máscara redonda (ns.Circle): iconos, aros y fondos son discos (WHITE8X8 teñido o icono).
 local addonName, ns = ...
 local Wheel = {}
@@ -28,6 +28,7 @@ local frame, bg, coreRing, coreDisc, label, title, dots, slots, arrows
 local active, selected = false, nil -- rueda abierta (tecla mantenida) / hueco apuntado
 local list, db = {}, nil
 local profileIdx, multi = 1, false  -- rueda mostrada y si hay otras ruedas a las que cambiar
+local inputProfile = 1              -- rueda cuyo botón seguro recibió el atajo mantenido
 local arrowX, hoverArrow = 0, nil   -- distancia horizontal de las flechas y la que está bajo el cursor
 local ox, oy = 0, 0                -- centro de la rueda en coordenadas de UIParent
 local R, S, dead = 0, 0, 0         -- radio, tamaño de icono, zona muerta (ya acotados)
@@ -35,6 +36,7 @@ local ar, ag, ab = 1, 1, 1         -- color de acento
 local openT, ia, indA = 0, 0, 0    -- progreso de apertura, ángulo e intensidad del indicador
 local armed, wasClick = false, false -- failsafe de tecla soltada / clic izquierdo previo
 local heldKeys = {}                -- teclas físicas del atajo (sin modificadores) para saber si sigue pulsado
+local secureCharacterSelected = false
 
 local MOUSE = { BUTTON1 = "LeftButton", BUTTON2 = "RightButton", BUTTON3 = "MiddleButton", BUTTON4 = "Button4", BUTTON5 = "Button5" }
 
@@ -103,6 +105,11 @@ local function OnUpdate(_, dt)
 
 	-- Selección
 	local idx = not hoverArrow and Wheel.SliceAt(dx, dy, n, dead) or nil
+	local secureCharacter = idx and list[idx].id == "character" or false
+	if secureCharacter ~= secureCharacterSelected then
+		secureCharacterSelected = secureCharacter
+		ns.SetSecureCharacterAction(inputProfile, secureCharacter)
+	end
 	if idx ~= selected then
 		selected = idx
 		if idx then
@@ -180,11 +187,11 @@ end
 
 local function Build()
 	if frame then return end
-	frame = CreateFrame("Frame", "QuickWheelFrame", UIParent)
+	frame = CreateFrame("Frame", "RadialHubFrame", UIParent)
 	frame:SetFrameStrata("FULLSCREEN_DIALOG")
 	frame:SetWidth(1); frame:SetHeight(1) -- solo ancla: todo lo demás se centra en él
 	frame:Hide()
-	tinsert(UISpecialFrames, "QuickWheelFrame") -- Escape cierra (y OnHide cancela)
+	tinsert(UISpecialFrames, "RadialHubFrame") -- Escape cierra (y OnHide cancela)
 
 	bg       = Disc(frame, "BACKGROUND", 0, 0, 0, 1)
 	coreRing = Disc(frame, "BORDER", 1, 1, 1, 1)
@@ -306,8 +313,11 @@ function Wheel.Open(profile)
 	profile = profile or 1
 	db = ns.db
 	local entries = ns.GetActive(profile)
-	if not entries then ns.Print("la rueda " .. profile .. " no existe. Créala en /qw."); return end
-	if #entries == 0 then ns.Print("la rueda " .. profile .. " no tiene opciones activas. Usa /qw para activarlas."); return end
+	if not entries then ns.Print("la rueda " .. profile .. " no existe. Créala en /rh."); return end
+	if #entries == 0 then ns.Print("la rueda " .. profile .. " no tiene opciones activas. Usa /rh para activarlas."); return end
+	inputProfile = profile
+	secureCharacterSelected = false
+	ns.SetSecureCharacterAction(inputProfile, false)
 	Build()
 	Layout(profile)
 
@@ -334,6 +344,8 @@ function Wheel.Switch(dir)
 		local j = (profileIdx - 1 + dir * step) % ns.MAX_PROFILES + 1
 		local entries = ns.GetActive(j)
 		if entries and #entries > 0 then
+			secureCharacterSelected = false
+			ns.SetSecureCharacterAction(inputProfile, false)
 			Layout(j)
 			openT = db.anim and 0.4 or 1 -- pequeño "florecimiento" al cambiar
 			if db.sound then PlaySound(SOUND_TICK) end
@@ -350,11 +362,14 @@ function Wheel.Release()
 	frame:Hide()
 	if entry then
 		if db.sound then PlaySound(SOUND_PICK) end
+		if entry.id == "character" then return end -- solo se abre por el clic seguro; nunca llamar ToggleCharacter desde Lua
 		-- un instante después: algunos paneles (bolsas con Bagnon) no se abren si se llama justo al soltar la tecla
 		if C_Timer and C_Timer.After then C_Timer.After(0.05, function() ns.Run(entry) end) else ns.Run(entry) end
 	end
 end
 
 function Wheel.Cancel()
+	secureCharacterSelected = false
+	ns.SetSecureCharacterAction(inputProfile, false)
 	if active then frame:Hide() end
 end

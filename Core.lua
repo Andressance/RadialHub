@@ -1,24 +1,54 @@
--- QuickWheel · Core: base de datos, catálogo de acciones, atajo y comandos.
--- Cliente WoW Forever (Interface 16001, motor moderno). Todo vive en el namespace privado `ns`; los únicos
--- globales son los que el cliente exige: QuickWheelDB (SavedVariables), QuickWheel_OnKey (Bindings.xml),
--- los textos de BINDING_*, SLASH_*, y los marcos con nombre QuickWheelFrame / QuickWheelConfig (para Escape).
+-- RadialHub · Core: base de datos, catálogo de acciones, atajo y comandos.
+-- Probado en WoW Forever (Interface 16001); Retail y Classic son experimentales (las opciones sin ruta se ocultan). Todo vive en el namespace privado `ns`; los únicos
+-- globales son los que el cliente exige: RadialHubDB (SavedVariables), RadialHub_OnKey (Bindings.xml),
+-- los textos de BINDING_*, SLASH_*, y los marcos con nombre RadialHubFrame / RadialHubConfig (para Escape).
 local addonName, ns = ...
 
 -- Hasta 4 ruedas (perfiles), cada una con su propio atajo (Bindings.xml).
 ns.MAX_PROFILES = 4
 ns.MAX_SLOTS = 16 -- opciones máximas activas por rueda
-ns.BINDINGS = { "QUICKWHEEL_TOGGLE", "QUICKWHEEL_TOGGLE2", "QUICKWHEEL_TOGGLE3", "QUICKWHEEL_TOGGLE4" }
+ns.BINDINGS, ns.LEGACY_BINDINGS = {}, {}
+local secureInputs = {}
 
-BINDING_HEADER_QUICKWHEEL = "QuickWheel"
-BINDING_NAME_QUICKWHEEL_TOGGLE = "Abrir rueda 1 (mantener pulsada)"
-BINDING_NAME_QUICKWHEEL_TOGGLE2 = "Abrir rueda 2 (mantener pulsada)"
-BINDING_NAME_QUICKWHEEL_TOGGLE3 = "Abrir rueda 3 (mantener pulsada)"
-BINDING_NAME_QUICKWHEEL_TOGGLE4 = "Abrir rueda 4 (mantener pulsada)"
+BINDING_HEADER_RADIALHUB = "RadialHub"
+for i = 1, ns.MAX_PROFILES do
+	local name = "RadialHubSecureInput" .. i
+	ns.BINDINGS[i] = "CLICK " .. name .. ":LeftButton"
+	ns.LEGACY_BINDINGS[i] = { "RADIALHUB_TOGGLE" .. (i == 1 and "" or i), "QUICKWHEEL_TOGGLE" .. (i == 1 and "" or i) }
+	_G["BINDING_NAME_" .. ns.BINDINGS[i]] = "Abrir rueda " .. i .. " (mantener pulsada)"
+	local profile = i
+	local input = CreateFrame("Button", name, UIParent, "SecureActionButtonTemplate,SecureHandlerStateTemplate")
+	input:SetSize(1, 1); input:SetPoint("BOTTOMLEFT", UIParent, "BOTTOMLEFT", -20, -20)
+	input:SetAlpha(0); input:EnableMouse(true); input:RegisterForClicks("AnyDown", "AnyUp")
+	input:SetAttribute("useOnKeyDown", false)
+	input:SetAttribute("*type1", nil)
+	input:SetAttribute("_onstate-rhcombat", [[if newstate == "combat" then self:SetAttribute("*type1", nil) end]])
+	RegisterStateDriver(input, "rhcombat", "[combat] combat; nocombat")
+	input:HookScript("OnClick", function(self, _, down)
+		if down then
+			ns.Wheel.Open(profile)
+		elseif self.rhCharacterSelected then
+			ns.SetSecureCharacterAction(profile, false)
+			ns.Wheel.Cancel()
+		else
+			ns.Wheel.Release()
+		end
+	end)
+	secureInputs[i] = input
+end
+
+function ns.SetSecureCharacterAction(i, enabled)
+	local input = secureInputs[i]
+	input.rhCharacterSelected = enabled and CharacterMicroButton ~= nil or false
+	if InCombatLockdown() then return end
+	input:SetAttribute("*type1", input.rhCharacterSelected and "click" or nil)
+	input:SetAttribute("*clickbutton1", input.rhCharacterSelected and CharacterMicroButton or nil)
+end
 
 local DEFAULT_KEY = "ALT-Q" -- solo se asigna una vez, a la rueda 1, y si está libre
 
 function ns.Print(msg)
-	DEFAULT_CHAT_FRAME:AddMessage("|cffffd100QuickWheel|r: " .. msg)
+	DEFAULT_CHAT_FRAME:AddMessage("|cffffd100RadialHub|r: " .. msg)
 end
 
 ----------------------------------------------------------------------------------------------------
@@ -32,12 +62,12 @@ function ns.Circle(tex, path)
 	path = path or WHITE
 	tex:SetTexture(path)
 	if tex.AddMaskTexture then
-		if not tex.qwMask then
+		if not tex.rhMask then
 			local mask = tex:GetParent():CreateMaskTexture()
 			mask:SetTexture(MASK, "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE")
 			mask:SetAllPoints(tex)
 			tex:AddMaskTexture(mask)
-			tex.qwMask = mask
+			tex.rhMask = mask
 		end
 	else
 		SetPortraitToTexture(tex, path) -- clientes sin máscaras
@@ -49,14 +79,13 @@ end
 -- Cada acción prueba, por orden, funciones del propio juego y, si no, su atajo nativo (RunBinding):
 --   fn   = { "Funcion" o "Tabla.Funcion", arg1, arg2... }; vale la primera que existe y no da error.
 --   bind = nombres de binding; se comprueba que existan con BINDING_NAME_<bind>.
--- /qw check muestra qué ruta usa cada entrada en tu cliente.
+-- /rh check muestra qué ruta usa cada entrada en tu cliente.
 ----------------------------------------------------------------------------------------------------
 local ICON = "Interface\\Icons\\"
 
 ns.Catalog = {
 	{ id = "character",    name = "Personaje",             icon = ICON .. "INV_Shirt_White_01",        default = true,
-		bind = { "TOGGLECHARACTER0" },
-		fn = { { "ToggleCharacter", "PaperDollFrame" } } },
+		secureClick = "CharacterMicroButton", bind = {}, fn = {} },
 	{ id = "talents",      name = "Talentos",              icon = ICON .. "Spell_Holy_ArcaneIntellect", default = true,
 		bind = { "TOGGLETALENTS" },
 		fn = { { "PlayerSpellsUtil.ToggleClassTalentOrSpecFrame" }, { "ToggleTalentFrame" } } },
@@ -141,7 +170,7 @@ local function RunCommand(entry)
 		return
 	end
 	local text = strtrim(entry.command or "")
-	if text == "" then ns.Print(entry.name .. ": no tiene comando (edítala en /qw)."); return end
+	if text == "" then ns.Print(entry.name .. ": no tiene comando (edítala en /rh)."); return end
 	local cmd, code = text:match("^/(%a+)%s+(.*)$")
 	local ok, err
 	if cmd and (strlower(cmd) == "run" or strlower(cmd) == "script") then
@@ -155,14 +184,17 @@ local function RunCommand(entry)
 	if not ok then ns.Print("Error en " .. entry.name .. ": " .. tostring(err)) end
 end
 
--- Rutas posibles de la entrada en este cliente, por orden: funciones que existen y luego atajos nativos (RunBinding).
+-- El helper seguro evita propagar taint al abrir paneles; RunBinding no ejecuta acciones protegidas desde el addon.
 local function Routes(entry)
 	local routes = {}
 	for _, spec in ipairs(entry.fn) do
 		local f = _G
 		for part in spec[1]:gmatch("[^.]+") do f = type(f) == "table" and f[part] or nil end
 		if type(f) == "function" then
-			routes[#routes + 1] = { label = "fn " .. spec[1], run = function() f(unpack(spec, 2)) end }
+			routes[#routes + 1] = { label = "fn " .. spec[1], run = function()
+				local call = securecallfunction or securecall
+				if call then call(f, unpack(spec, 2)) else f(unpack(spec, 2)) end
+			end }
 		end
 	end
 	for _, b in ipairs(entry.bind) do
@@ -173,7 +205,13 @@ local function Routes(entry)
 	return routes
 end
 
--- Prueba cada ruta hasta que una no falle; /qw debug muestra cuál se usó.
+-- ¿Se puede abrir en este cliente? Las entradas propias siempre; las integradas, si tienen alguna ruta.
+-- Se evalúa al usarlas (no al cargar) porque algunas funciones de Blizzard se definen más tarde.
+function ns.Available(entry)
+	return entry.custom or (entry.secureClick and _G[entry.secureClick] ~= nil) or #Routes(entry) > 0
+end
+
+-- Prueba cada ruta hasta que una no falle; /rh debug muestra cuál se usó.
 function ns.Run(entry)
 	if entry.custom then return RunCommand(entry) end
 	local routes, err = Routes(entry)
@@ -188,19 +226,19 @@ function ns.Run(entry)
 	if err then
 		ns.Print("No se pudo abrir " .. entry.name .. ": " .. tostring(err))
 	else
-		ns.Print(entry.name .. " no está disponible en este cliente (/qw check para ver el detalle).")
+		ns.Print(entry.name .. " no está disponible en este cliente (/rh check para ver el detalle).")
 	end
 end
 
 function ns.Check()
 	for _, entry in ipairs(ns.Catalog) do
-		local route = Routes(entry)[1]
+		local route = entry.secureClick and _G[entry.secureClick] and { label = "secure click " .. entry.secureClick } or Routes(entry)[1]
 		ns.Print(entry.name .. ": " .. (route and route.label or "|cffff4040NO DISPONIBLE|r"))
 	end
 end
 
 ----------------------------------------------------------------------------------------------------
--- QuickWheelDB
+-- RadialHubDB
 --   (aspecto global) radius, iconSize, deadzone, bgAlpha, accent, sound, anim
 --   profiles[1..4] = { name, items = { { id, on }... } }   -- una por rueda; puede haber huecos
 --   custom[id]     = { id, name, icon, command, cat, emote, custom = true }   -- entradas propias (comunes a todas las ruedas)
@@ -302,7 +340,8 @@ function ns.GetActive(i)
 	if not p then return nil end
 	local list = {}
 	for _, it in ipairs(p.items) do
-		if it.on and #list < ns.MAX_SLOTS then list[#list + 1] = ns.Entry(it.id) end
+		local entry = ns.Entry(it.id)
+		if it.on and ns.Available(entry) and #list < ns.MAX_SLOTS then list[#list + 1] = entry end
 	end
 	return list
 end
@@ -315,7 +354,7 @@ function ns.BindKey(key, i)
 	local binding = ns.BINDINGS[i]
 	local prev = GetBindingAction(key)
 	for _, old in ipairs({ GetBindingKey(binding) }) do SetBinding(old) end
-	if not SetBinding(key, binding) then return false end
+	if not SetBindingClick(key, "RadialHubSecureInput" .. i, "LeftButton") then return false end
 	SaveBindings(GetCurrentBindingSet())
 	if prev and prev ~= "" and prev ~= binding then
 		ns.Print(GetBindingText(key, "KEY_") .. " estaba asignada a " .. (_G["BINDING_NAME_" .. prev] or prev) .. "; ahora abre la rueda " .. i .. ".")
@@ -330,9 +369,10 @@ function ns.ClearKey(i)
 end
 
 -- Lo llama Bindings.xml: "down" abre la rueda i, "up" ejecuta la opción apuntada.
-function QuickWheel_OnKey(keystate, i)
-	if keystate == "down" then ns.Wheel.Open(i) else ns.Wheel.Release() end
+function RadialHub_OnKey(keystate, i)
+	if keystate == "down" then ns.Wheel.Open(i) else ns.Wheel.Cancel() end -- obsolete legacy binding; never invoke protected panels here
 end
+function QuickWheel_OnKey(keystate, i) RadialHub_OnKey(keystate, i) end -- migration alias
 
 ----------------------------------------------------------------------------------------------------
 -- Eventos y comandos
@@ -342,23 +382,32 @@ events:RegisterEvent("ADDON_LOADED")
 events:RegisterEvent("PLAYER_LOGIN")
 events:SetScript("OnEvent", function(_, event, arg1)
 	if event == "ADDON_LOADED" and arg1 == addonName then
-		QuickWheelDB = QuickWheelDB or {}
-		ns.db = QuickWheelDB
+		RadialHubDB = RadialHubDB or {}
+		ns.db = RadialHubDB
 		Fill(ns.db)
-	elseif event == "PLAYER_LOGIN" and not ns.db.keyInit then
+	elseif event == "PLAYER_LOGIN" then
+		for i = 1, ns.MAX_PROFILES do
+			if not GetBindingKey(ns.BINDINGS[i]) then
+				for _, legacy in ipairs(ns.LEGACY_BINDINGS[i]) do
+					local key = GetBindingKey(legacy)
+					if key then ns.BindKey(key, i); break end
+				end
+			end
+		end
+		if ns.db.keyInit then return end
 		ns.db.keyInit = true
 		local action = GetBindingAction(DEFAULT_KEY)
 		if not GetBindingKey(ns.BINDINGS[1]) and (not action or action == "") and ns.BindKey(DEFAULT_KEY, 1) then
-			ns.Print("listo: mantén " .. DEFAULT_KEY .. " para abrir la rueda. /qw para configurarla.")
+			ns.Print("listo: mantén " .. DEFAULT_KEY .. " para abrir la rueda. /rh para configurarla.")
 		elseif not GetBindingKey(ns.BINDINGS[1]) then
-			ns.Print("escribe /qw para asignar la tecla de la rueda.")
+			ns.Print("escribe /rh para asignar la tecla de la rueda.")
 		end
 	end
 end)
 
-SLASH_QUICKWHEEL1 = "/qw"
-SLASH_QUICKWHEEL2 = "/quickwheel"
-SlashCmdList["QUICKWHEEL"] = function(msg)
+SLASH_RADIALHUB1 = "/rh"
+SLASH_RADIALHUB2 = "/radialhub"
+SlashCmdList["RADIALHUB"] = function(msg)
 	local cmd = strlower(strtrim(msg or ""))
 	if cmd == "check" then ns.Check()
 	elseif cmd == "debug" then

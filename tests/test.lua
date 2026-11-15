@@ -27,6 +27,8 @@ local function newFrame(name)
 	function f:GetChecked() return false end
 	function f:SetText(t) self.text = t end
 	function f:GetText() return self.text end
+	function f:SetAttribute(k, v) self.attributes = self.attributes or {}; self.attributes[k] = v end
+	function f:GetAttribute(k) return self.attributes and self.attributes[k] end
 	if name then _G[name] = f end
 	return setmetatable(f, { __index = function() return function(self) return self end end }) -- any other method: no-op
 end
@@ -43,17 +45,22 @@ local mouseDown, keyDown = {}, {}
 IsMouseButtonDown = function(b) return mouseDown[b] or false end
 IsKeyDown = function(k) return keyDown[k] or false end
 GetBindingKey = function() return "ALT-Q" end
+GetBindingAction = function() return "" end
 InCombatLockdown = function() return false end
 SetBinding, SaveBindings, GetCurrentBindingSet = function() return true end, noop, function() return 1 end
+local bindingClick
+SetBindingClick = function(key, name, button) bindingClick = { key, name, button }; return true end
+RegisterStateDriver = noop
 local cursor = { 500, 400 }
 GetCursorPosition = function() return cursor[1], cursor[2] end
 
 local calls = {}
 RunBinding = function(name) calls[#calls + 1] = "binding:" .. name end
+securecallfunction = function(fn, ...) return fn(...) end
 RunScript = function(code) calls[#calls + 1] = "script:" .. code end
 ChatEdit_SendText = function(box) calls[#calls + 1] = "chat:" .. box:GetText() end
 for _, b in ipairs({ "TOGGLECHARACTER0", "TOGGLETALENTS", "TOGGLESPELLBOOK", "TOGGLEQUESTLOG", "TOGGLEWORLDMAP",
-	"TOGGLEGUILDTAB", "OPENALLBAGS", "TOGGLEACHIEVEMENT" }) do
+	"TOGGLEGUILDTAB", "OPENALLBAGS", "TOGGLEACHIEVEMENT", "TOGGLESOCIAL" }) do
 	_G["BINDING_NAME_" .. b] = b
 end
 
@@ -62,14 +69,14 @@ WOW_PROJECT_ID, WOW_PROJECT_CAMELOT = 14, 14
 DoEmote = function(token) calls[#calls + 1] = "emote:" .. token end
 
 local ns = {}
-for _, file in ipairs({ "Core.lua", "Wheel.lua", "Config.lua" }) do assert(loadfile(file))("QuickWheel", ns) end
+for _, file in ipairs({ "Core.lua", "Wheel.lua", "Config.lua" }) do assert(loadfile(file))("RadialHub", ns) end
 
 local function check(cond, msg) if not cond then error("FAIL: " .. msg, 2) end end
 local function load(db)
-	QuickWheelDB = db
+	RadialHubDB = db
 	local events = frames[1]
-	events.scripts.OnEvent(events, "ADDON_LOADED", "QuickWheel")
-	return QuickWheelDB
+	events.scripts.OnEvent(events, "ADDON_LOADED", "RadialHub")
+	return RadialHubDB
 end
 
 -- 1. polar math: 8 slots, #1 on top, clockwise
@@ -89,6 +96,14 @@ check(ns.IsForever and not ns.CatalogByID.achievements and not ns.CatalogByID.lf
 -- 2. fresh install
 local db = load(nil)
 check(#db.profiles[1].items == 9 and db.selected == 1, "profile 1 has the 9 built-ins")
+CharacterMicroButton = newFrame("CharacterMicroButton")
+ns.SetSecureCharacterAction(1, true)
+check(RadialHubSecureInput1:GetAttribute("*type1") == "click" and RadialHubSecureInput1:GetAttribute("*clickbutton1") == CharacterMicroButton,
+	"character uses a secure click target")
+ns.SetSecureCharacterAction(1, false)
+check(RadialHubSecureInput1:GetAttribute("*type1") == nil, "secure character click is cleared")
+ns.BindKey("ALT-X", 1)
+check(bindingClick[1] == "ALT-X" and bindingClick[2] == "RadialHubSecureInput1", "wheel key is bound to its secure input button")
 local active = ns.GetActive(1)
 check(#active == 8 and active[1].id == "character" and active[8].id == "bags", "8 default entries in catalog order")
 check(ns.GetActive(2) == nil, "profile 2 does not exist yet")
@@ -187,6 +202,13 @@ cursor[1], cursor[2] = 500, 400
 wheel.scripts.OnUpdate(wheel, 0.016)
 ns.Wheel.Cancel()
 
+-- 6c. entries with no way to open them in this client are hidden from the wheel
+BINDING_NAME_TOGGLESOCIAL = nil
+check(not ns.Available(ns.CatalogByID.friends) and ns.Available(ns.CatalogByID.map), "availability follows the routes")
+check(#ns.GetActive(1) == 7, "friends hidden while it has no route, got " .. #ns.GetActive(1))
+BINDING_NAME_TOGGLESOCIAL = "TOGGLESOCIAL"
+check(#ns.GetActive(1) == 8, "friends back once it has a route")
+
 -- 7. custom entries: shared pool, on only in the chosen wheel, run through chat / RunScript
 ns.NewProfile(2, db.profiles[1])
 local id = ns.AddCustom({ name = "Bailar", icon = "INV_Misc_Note_01", command = "/dance" }, 2)
@@ -227,6 +249,8 @@ check(db.profiles[2] and db.custom[id2] and #db.profiles[1].items == 9 + 21, "re
 Boom = function() error("boom") end
 ns.Run({ name = "X", bind = {}, fn = { { "Boom" } } })
 check(printed[#printed]:find("No se pudo abrir X"), "action error printed")
+check(#ns.CatalogByID.character.fn == 0 and #ns.CatalogByID.character.bind == 0,
+	"character panel has no insecure ToggleCharacter fallback")
 ns.Run({ name = "Y", bind = {}, fn = { { "Nope" } } })
 check(printed[#printed]:find("no est"), "unavailable reported")
 BINDING_NAME_TOGGLEQUESTLOG = nil
@@ -241,8 +265,8 @@ ns.Check()
 
 -- 10. the config window builds and refreshes against the mock without errors
 ns.Config.Toggle()
-check(QuickWheelConfig, "config frame created")
+check(RadialHubConfig, "config frame created")
 for _, m in ipairs(printed) do check(not m:find("error al crear"), "config build error: " .. m) end
-QuickWheelConfig.scripts.OnShow(QuickWheelConfig)
+RadialHubConfig.scripts.OnShow(RadialHubConfig)
 
 print("ok")

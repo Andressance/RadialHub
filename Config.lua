@@ -1,4 +1,4 @@
--- QuickWheel · Config: ventana de configuración (/qw): ruedas (perfiles), atajo, opciones por categorías,
+-- RadialHub · Config: ventana de configuración (/rh): ruedas (perfiles), atajo, opciones por categorías,
 -- entradas propias (emotes, comandos) y aspecto.
 -- Widgets propios (botones planos, sliders, checks, lista con scroll) para un aspecto oscuro y limpio.
 -- La ventana se redimensiona (esquina inferior derecha); la lista muestra tantas filas como quepan.
@@ -93,7 +93,7 @@ local function Profile() return ns.db.profiles[ns.db.selected] end
 
 local function CountOn(p)
 	local n = 0
-	for _, it in ipairs(p.items) do if it.on then n = n + 1 end end
+	for _, it in ipairs(p.items) do if it.on and ns.Available(ns.Entry(it.id)) then n = n + 1 end end
 	return n
 end
 
@@ -103,7 +103,8 @@ local function Visible() return max(1, min(POOL, floor((frame:GetHeight() - CHRO
 local function View()
 	local v = {}
 	for i, it in ipairs(Profile().items) do
-		if not filter or ns.CatOf(ns.Entry(it.id)) == filter then v[#v + 1] = i end
+		local entry = ns.Entry(it.id)
+		if ns.Available(entry) and (not filter or ns.CatOf(entry) == filter) then v[#v + 1] = i end
 	end
 	return v
 end
@@ -452,7 +453,7 @@ end
 
 local function Build()
 	local db = ns.db
-	frame = CreateFrame("Frame", "QuickWheelConfig", UIParent, "BackdropTemplate")
+	frame = CreateFrame("Frame", "RadialHubConfig", UIParent, "BackdropTemplate")
 	frame:SetWidth(db.winW or 780); frame:SetHeight(db.winH or 600)
 	frame:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
 	frame:SetFrameStrata("HIGH") -- por debajo del selector de color (DIALOG)
@@ -475,10 +476,10 @@ local function Build()
 	end)
 	frame:RegisterEvent("UPDATE_BINDINGS")
 	frame:SetScript("OnEvent", Refresh)
-	tinsert(UISpecialFrames, "QuickWheelConfig")
+	tinsert(UISpecialFrames, "RadialHubConfig")
 	frame:Hide()
 
-	local title = Text(frame, 16, 1, 0.82, 0.2, "QuickWheel")
+	local title = Text(frame, 16, 1, 0.82, 0.2, "RadialHub")
 	title:SetPoint("TOPLEFT", frame, "TOPLEFT", 16, -14)
 	local getMeta = C_AddOns and C_AddOns.GetAddOnMetadata or GetAddOnMetadata
 	local ver = Text(frame, 10, 0.5, 0.5, 0.55, "v" .. (getMeta(addonName, "Version") or "?"))
@@ -657,9 +658,9 @@ end
 -- Panel de Interface Options / Settings: un acceso directo a la ventana
 ----------------------------------------------------------------------------------------------------
 local panel = CreateFrame("Frame")
-panel.name = "QuickWheel"
-Text(panel, 16, 1, 0.82, 0.2, "QuickWheel"):SetPoint("TOPLEFT", panel, "TOPLEFT", 16, -16)
-Text(panel, 12, 0.9, 0.9, 0.9, "Rueda radial rápida. También con /qw."):SetPoint("TOPLEFT", panel, "TOPLEFT", 16, -44)
+panel.name = "RadialHub"
+Text(panel, 16, 1, 0.82, 0.2, "RadialHub"):SetPoint("TOPLEFT", panel, "TOPLEFT", 16, -16)
+Text(panel, 12, 0.9, 0.9, 0.9, "Rueda radial rápida. También con /rh."):SetPoint("TOPLEFT", panel, "TOPLEFT", 16, -44)
 local open = Flat(panel, 200, 26, "Abrir configuración")
 open:SetPoint("TOPLEFT", panel, "TOPLEFT", 16, -72)
 open:SetScript("OnClick", function()
