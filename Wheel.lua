@@ -24,9 +24,11 @@ end
 
 local function Lerp(a, b, t) return a + (b - a) * t end
 
-local frame, bg, coreRing, coreDisc, label, dots, slots
+local frame, bg, coreRing, coreDisc, label, title, dots, slots, arrows
 local active, selected = false, nil -- rueda abierta (tecla mantenida) / hueco apuntado
 local list, db = {}, nil
+local profileIdx, multi = 1, false  -- rueda mostrada y si hay otras ruedas a las que cambiar
+local arrowX, hoverArrow = 0, nil   -- distancia horizontal de las flechas y la que está bajo el cursor
 local ox, oy = 0, 0                -- centro de la rueda en coordenadas de UIParent
 local R, S, dead = 0, 0, 0         -- radio, tamaño de icono, zona muerta (ya acotados)
 local ar, ag, ab = 1, 1, 1         -- color de acento
@@ -67,10 +69,29 @@ local function OnUpdate(_, dt)
 	local held = KeyHeld()
 	if held then armed = true elseif held == false and armed then Wheel.Release() return end
 
-	-- Clic izquierdo: confirma la opción apuntada (o cancela si estás en el centro).
+	-- Cursor relativo al centro de la rueda y flecha de cambio de rueda bajo él (si hay otras ruedas).
+	local cx, cy = GetCursorPosition()
+	local scale = UIParent:GetEffectiveScale()
+	local dx, dy = cx / scale - ox, cy / scale - oy
+	hoverArrow = nil
+	if multi then
+		for _, a in ipairs(arrows) do
+			local ax = a.dir * arrowX
+			if (dx - ax) ^ 2 + dy ^ 2 <= 18 * 18 then hoverArrow = a end
+		end
+	end
+
+	-- Clic izquierdo: cambia de rueda sobre una flecha; si no, confirma la opción apuntada (o cancela en el centro).
 	local click = IsMouseButtonDown("LeftButton")
 	if click and not wasClick then
-		if selected then Wheel.Release() else Wheel.Cancel() end
+		if hoverArrow then
+			wasClick = true
+			Wheel.Switch(hoverArrow.dir)
+		elseif selected then
+			Wheel.Release()
+		else
+			Wheel.Cancel()
+		end
 		return
 	end
 	wasClick = click
@@ -80,10 +101,8 @@ local function OnUpdate(_, dt)
 	local e = 1 - (1 - openT) ^ 3 -- ease-out
 	frame:SetAlpha(e)
 
-	-- Selección: cursor relativo al centro de la rueda.
-	local cx, cy = GetCursorPosition()
-	local scale = UIParent:GetEffectiveScale()
-	local idx = Wheel.SliceAt(cx / scale - ox, cy / scale - oy, n, dead)
+	-- Selección
+	local idx = not hoverArrow and Wheel.SliceAt(dx, dy, n, dead) or nil
 	if idx ~= selected then
 		selected = idx
 		if idx then
@@ -136,6 +155,13 @@ local function OnUpdate(_, dt)
 		d:SetVertexColor(ar, ag, ab, indA * 0.9 * f * f) -- se apaga hacia el centro
 	end
 	coreRing:SetVertexColor(ar, ag, ab, 0.55 + 0.45 * indA) -- el aro central se enciende al apuntar
+	if multi then
+		for _, a in ipairs(arrows) do
+			local hot = (a == hoverArrow)
+			a.ring:SetVertexColor(hot and ar or 0.32, hot and ag or 0.32, hot and ab or 0.36, hot and 1 or 0.9)
+			a.text:SetTextColor(hot and 1 or 0.7, hot and 1 or 0.7, hot and 1 or 0.7)
+		end
+	end
 end
 
 local function EnsureSlots(n)
@@ -181,22 +207,37 @@ local function Build()
 
 	slots = {} -- se crean al abrir, según las opciones de la rueda (EnsureSlots)
 
+	-- Flechas para cambiar de rueda sin cerrar (clic o rueda del ratón) y nombre de la rueda actual.
+	arrows = {}
+	for _, dir in ipairs({ -1, 1 }) do
+		local a = { dir = dir }
+		a.ring = Disc(frame, "BORDER", 1, 1, 1, 1)
+		a.dark = Disc(frame, "ARTWORK", 0.05, 0.05, 0.07, 0.95)
+		a.text = frame:CreateFontString(nil, "OVERLAY")
+		a.text:SetFont(FONT, 16, "OUTLINE")
+		a.text:SetText(dir < 0 and "<" or ">")
+		arrows[#arrows + 1] = a
+	end
+	title = frame:CreateFontString(nil, "OVERLAY")
+	title:SetFont(FONT, 11, "OUTLINE")
+
+	-- Captura el ratón mientras la rueda está abierta: el clic no atraviesa al mundo y la rueda del ratón cambia de rueda.
+	local catcher = CreateFrame("Frame", nil, frame)
+	catcher:SetAllPoints(UIParent)
+	catcher:EnableMouse(true)
+	catcher:EnableMouseWheel(true)
+	catcher:SetScript("OnMouseWheel", function(_, delta) Wheel.Switch(delta > 0 and -1 or 1) end)
+
 	frame:SetScript("OnUpdate", OnUpdate)
 	frame:SetScript("OnHide", function() active, selected = false, nil end)
 	frame:RegisterEvent("PLAYER_REGEN_DISABLED") -- entrar en combate cancela la rueda abierta
 	frame:SetScript("OnEvent", function() Wheel.Cancel() end)
 end
 
--- Tecla pulsada: coloca la rueda centrada en el cursor.
-function Wheel.Open(profile)
-	if active then return end
-	profile = profile or 1
-	db = ns.db
-	local entries = ns.GetActive(profile)
-	if not entries then ns.Print("la rueda " .. profile .. " no existe. Créala en /qw."); return end
-	if #entries == 0 then ns.Print("la rueda " .. profile .. " no tiene opciones activas. Usa /qw para activarlas."); return end
-	list = entries
-	Build()
+-- Dimensiones y contenido de la rueda `profile` (ya validada: existe y tiene opciones).
+local function Layout(profile)
+	list = ns.GetActive(profile)
+	profileIdx = profile
 	EnsureSlots(#list)
 
 	S = db.iconSize
@@ -204,7 +245,8 @@ function Wheel.Open(profile)
 	dead = max(10, min(db.deadzone, R - S * 0.65 - 10)) -- siempre queda sitio para el indicador
 	ar, ag, ab = db.accent[1], db.accent[2], db.accent[3]
 
-	SizeDisc(bg, 2 * (R + S * 0.625 + 10))
+	local bgR = R + S * 0.625 + 10
+	SizeDisc(bg, 2 * bgR)
 	bg:SetVertexColor(0, 0, 0, db.bgAlpha)
 	SizeDisc(coreRing, 2 * dead + 4)
 	coreRing:SetVertexColor(ar, ag, ab, 0.55)
@@ -226,6 +268,49 @@ function Wheel.Open(profile)
 		end
 	end
 
+	-- flechas y título solo si hay otra rueda con opciones a la que cambiar
+	multi = false
+	for i = 1, ns.MAX_PROFILES do
+		local others = i ~= profile and ns.GetActive(i)
+		if others and #others > 0 then multi = true end
+	end
+	arrowX = bgR + 22
+	for _, a in ipairs(arrows) do
+		if multi then
+			SizeDisc(a.ring, 32); SizeDisc(a.dark, 28)
+			a.ring:ClearAllPoints(); a.dark:ClearAllPoints(); a.text:ClearAllPoints()
+			a.ring:SetPoint("CENTER", frame, "CENTER", a.dir * arrowX, 0)
+			a.dark:SetPoint("CENTER", frame, "CENTER", a.dir * arrowX, 0)
+			a.text:SetPoint("CENTER", frame, "CENTER", a.dir * arrowX, 1)
+			a.ring:Show(); a.dark:Show(); a.text:Show()
+		else
+			a.ring:Hide(); a.dark:Hide(); a.text:Hide()
+		end
+	end
+	if multi then
+		local name = ns.db.profiles[profile].name
+		title:ClearAllPoints()
+		title:SetPoint("CENTER", frame, "CENTER", 0, bgR + 12)
+		title:SetText(name ~= "" and name or ("Rueda " .. profile))
+		title:SetTextColor(ar, ag, ab)
+		title:Show()
+	else
+		title:Hide()
+	end
+	selected, indA = nil, 0
+end
+
+-- Tecla pulsada: coloca la rueda centrada en el cursor.
+function Wheel.Open(profile)
+	if active then return end
+	profile = profile or 1
+	db = ns.db
+	local entries = ns.GetActive(profile)
+	if not entries then ns.Print("la rueda " .. profile .. " no existe. Créala en /qw."); return end
+	if #entries == 0 then ns.Print("la rueda " .. profile .. " no tiene opciones activas. Usa /qw para activarlas."); return end
+	Build()
+	Layout(profile)
+
 	local cx, cy = GetCursorPosition()
 	local scale = UIParent:GetEffectiveScale()
 	ox, oy = cx / scale, cy / scale
@@ -238,8 +323,23 @@ function Wheel.Open(profile)
 		if base and base ~= "" and (MOUSE[base] or IsKeyDown) then heldKeys[#heldKeys + 1] = base end
 	end
 	armed, wasClick = false, IsMouseButtonDown("LeftButton")
-	openT, indA, selected, active = db.anim and 0 or 1, 0, nil, true
+	openT, active = db.anim and 0 or 1, true
 	frame:Show()
+end
+
+-- Cambia a la siguiente (dir = 1) o anterior (dir = -1) rueda con opciones, sin cerrar ni mover la rueda.
+function Wheel.Switch(dir)
+	if not active or not multi then return end
+	for step = 1, ns.MAX_PROFILES - 1 do
+		local j = (profileIdx - 1 + dir * step) % ns.MAX_PROFILES + 1
+		local entries = ns.GetActive(j)
+		if entries and #entries > 0 then
+			Layout(j)
+			openT = db.anim and 0.4 or 1 -- pequeño "florecimiento" al cambiar
+			if db.sound then PlaySound(SOUND_TICK) end
+			return
+		end
+	end
 end
 
 -- Tecla soltada: abre la opción apuntada (si la hay) y cierra la rueda.
@@ -250,7 +350,8 @@ function Wheel.Release()
 	frame:Hide()
 	if entry then
 		if db.sound then PlaySound(SOUND_PICK) end
-		ns.Run(entry)
+		-- un instante después: algunos paneles (bolsas con Bagnon) no se abren si se llama justo al soltar la tecla
+		if C_Timer and C_Timer.After then C_Timer.After(0.05, function() ns.Run(entry) end) else ns.Run(entry) end
 	end
 end
 

@@ -57,6 +57,10 @@ for _, b in ipairs({ "TOGGLECHARACTER0", "TOGGLETALENTS", "TOGGLESPELLBOOK", "TO
 	_G["BINDING_NAME_" .. b] = b
 end
 
+-- WoW Forever: Logros y Buscador de mazmorras no existen y se ocultan
+WOW_PROJECT_ID, WOW_PROJECT_CAMELOT = 14, 14
+DoEmote = function(token) calls[#calls + 1] = "emote:" .. token end
+
 local ns = {}
 for _, file in ipairs({ "Core.lua", "Wheel.lua", "Config.lua" }) do assert(loadfile(file))("QuickWheel", ns) end
 
@@ -80,18 +84,20 @@ check(at(10, 10, 8, 30) == nil, "inside deadzone -> nil")
 check(at(0, 100, 1, 30) == 1 and at(0, -100, 1, 30) == 1, "single slot")
 check(at(0, 100, 0, 30) == nil, "no slots")
 
+check(ns.IsForever and not ns.CatalogByID.achievements and not ns.CatalogByID.lfd and #ns.Catalog == 9, "Forever hides noForever entries")
+
 -- 2. fresh install
 local db = load(nil)
-check(#db.profiles[1].items == 10 and db.selected == 1, "profile 1 has the 10 built-ins")
+check(#db.profiles[1].items == 9 and db.selected == 1, "profile 1 has the 9 built-ins")
 local active = ns.GetActive(1)
-check(#active == 8 and active[1].id == "character" and active[8].id == "achievements", "8 default entries in catalog order")
+check(#active == 8 and active[1].id == "character" and active[8].id == "bags", "8 default entries in catalog order")
 check(ns.GetActive(2) == nil, "profile 2 does not exist yet")
 
 -- 3. migration from the single-wheel save (order/enabled), dropping a deleted id and appending new ones
 db = load({ order = { "bags", "ghost", "map" }, enabled = { bags = true, map = false }, radius = 150 })
 local items = db.profiles[1].items
 check(db.radius == 150 and db.iconSize == 52 and not db.order and not db.enabled, "migrated, kept saved value, filled the rest")
-check(items[1].id == "bags" and items[1].on and items[2].id == "map" and not items[2].on and #items == 10, "order kept, ghost dropped, missing appended")
+check(items[1].id == "bags" and items[1].on and items[2].id == "map" and not items[2].on and #items == 9, "order kept, ghost dropped, missing appended")
 check(items[3].on == true and items[#items].on == false, "new built-ins use their defaults")
 
 -- 4. open -> point right -> release runs the 3rd active entry (spellbook)
@@ -139,7 +145,7 @@ ns.Wheel.Cancel()
 
 -- 6. profiles: copy, independent edits, missing wheel, delete
 ns.NewProfile(2, db.profiles[1])
-check(db.profiles[2].name == "Rueda 2" and #db.profiles[2].items == 10, "profile 2 is a copy")
+check(db.profiles[2].name == "Rueda 2" and #db.profiles[2].items == 9, "profile 2 is a copy")
 db.profiles[2].items[1].on = false
 check(#ns.GetActive(2) == 7 and #ns.GetActive(1) == 8, "profiles are independent")
 ns.Wheel.Open(3)
@@ -150,14 +156,45 @@ check(db.profiles[1], "wheel 1 cannot be deleted")
 ns.DeleteProfile(2)
 check(db.profiles[2] == nil and db.selected == 1, "wheel 2 deleted, selection back to 1")
 
+-- 6b. switching wheels while open: mouse wheel / arrows
+ns.NewProfile(2, db.profiles[1])
+db.profiles[2].items[1].on = false -- wheel 2: talents, spellbook, quests... (7 options)
+cursor[1], cursor[2] = 500, 400
+ns.Wheel.Open(1)
+ns.Wheel.Switch(1)
+cursor[1], cursor[2] = 600, 400
+wheel.scripts.OnUpdate(wheel, 0.016)
+ns.Wheel.Release()
+check(calls[#calls] == "binding:TOGGLEQUESTLOG", "after switching to wheel 2, slot 3 is quests, got " .. tostring(calls[#calls]))
+-- clicking the right arrow (outside the ring) switches too, and does not run anything
+n = #calls
+cursor[1], cursor[2] = 500, 400
+ns.Wheel.Open(1)
+cursor[1], cursor[2] = 500 + 174, 400
+wheel.scripts.OnUpdate(wheel, 0.016)
+mouseDown.LeftButton = true
+wheel.scripts.OnUpdate(wheel, 0.016)
+mouseDown.LeftButton = nil
+check(#calls == n and wheel:IsShown(), "arrow click switches without running or closing")
+cursor[1], cursor[2] = 600, 400
+wheel.scripts.OnUpdate(wheel, 0.016)
+ns.Wheel.Release()
+check(calls[#calls] == "binding:TOGGLEQUESTLOG", "arrow click moved to wheel 2")
+-- with a single wheel there is nothing to switch to
+ns.DeleteProfile(2)
+ns.Wheel.Open(1); ns.Wheel.Switch(1)
+cursor[1], cursor[2] = 500, 400
+wheel.scripts.OnUpdate(wheel, 0.016)
+ns.Wheel.Cancel()
+
 -- 7. custom entries: shared pool, on only in the chosen wheel, run through chat / RunScript
 ns.NewProfile(2, db.profiles[1])
-local id = ns.AddCustom("Bailar", "INV_Misc_Note_01", "/dance", 2)
-check(#db.profiles[1].items == 11 and not db.profiles[1].items[11].on and db.profiles[2].items[11].on, "custom listed everywhere, on only in wheel 2")
+local id = ns.AddCustom({ name = "Bailar", icon = "INV_Misc_Note_01", command = "/dance" }, 2)
+check(#db.profiles[1].items == 10 and not db.profiles[1].items[10].on and db.profiles[2].items[10].on, "custom listed everywhere, on only in wheel 2")
 check(ns.GetActive(2)[#ns.GetActive(2)].id == id and #ns.GetActive(1) == 8, "custom shows in wheel 2 only")
 ns.Run(db.custom[id])
 check(calls[#calls] == "chat:/dance", "emote goes through the chat edit box")
-local id2 = ns.AddCustom("Script", nil, "/run Foo()", 1)
+local id2 = ns.AddCustom({ name = "Script", command = "/run Foo()" }, 1)
 ns.Run(db.custom[id2])
 check(calls[#calls] == "script:Foo()", "/run goes through RunScript")
 ns.Run({ name = "Vacia", custom = true, command = "  " })
@@ -165,10 +202,17 @@ check(printed[#printed]:find("no tiene comando"), "empty command reported")
 check(ns.IconPath(nil):find("QuestionMark") and ns.IconPath("Spell_Nature_Heal") == "Interface\\Icons\\Spell_Nature_Heal"
 	and ns.IconPath("12345") == 12345 and ns.IconPath("Interface\\Icons\\X") == "Interface\\Icons\\X", "icon paths")
 ns.DeleteCustom(id)
-check(not db.custom[id] and #db.profiles[1].items == 11 and #db.profiles[2].items == 11, "custom removed from every wheel")
+check(not db.custom[id] and #db.profiles[1].items == 10 and #db.profiles[2].items == 10, "custom removed from every wheel")
+
+-- 7a. emotes use DoEmote; categories
+local em = ns.AddCustom({ name = "Bailar", cat = "emote", emote = "DANCE", command = "" }, 1)
+ns.Run(db.custom[em])
+check(calls[#calls] == "emote:DANCE", "emote entry uses DoEmote")
+check(ns.CatOf(db.custom[em]) == "emote" and ns.CatOf(db.custom[id2]) == "command" and ns.CatOf(ns.CatalogByID.map) == "menu", "categories")
+ns.DeleteCustom(em)
 
 -- 7b. slot cap
-for i = 1, 20 do ns.AddCustom("x" .. i, nil, "/x", 1) end
+for i = 1, 20 do ns.AddCustom({ name = "x" .. i, command = "/x" }, 1) end
 for _, it in ipairs(db.profiles[1].items) do it.on = true end
 check(#ns.GetActive(1) == ns.MAX_SLOTS, "a wheel never exceeds MAX_SLOTS")
 
@@ -177,7 +221,7 @@ db.radius = 999; db.profiles[1].items[1].on = false; db.keyInit = true
 db.selected = 1
 ns.ResetDB()
 check(db.radius == 110 and db.profiles[1].items[1].on and db.keyInit, "reset restores defaults, keeps keyInit")
-check(db.profiles[2] and db.custom[id2] and #db.profiles[1].items == 10 + 21, "reset keeps wheels and custom entries")
+check(db.profiles[2] and db.custom[id2] and #db.profiles[1].items == 9 + 21, "reset keeps wheels and custom entries")
 
 -- 9. a failing action is reported, not thrown; no route says so; fallbacks
 Boom = function() error("boom") end
@@ -198,6 +242,7 @@ ns.Check()
 -- 10. the config window builds and refreshes against the mock without errors
 ns.Config.Toggle()
 check(QuickWheelConfig, "config frame created")
+for _, m in ipairs(printed) do check(not m:find("error al crear"), "config build error: " .. m) end
 QuickWheelConfig.scripts.OnShow(QuickWheelConfig)
 
 print("ok")

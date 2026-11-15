@@ -46,9 +46,9 @@ end
 
 ----------------------------------------------------------------------------------------------------
 -- Catálogo de acciones. Para añadir un panel basta con una entrada más.
--- Cada acción usa el atajo nativo del propio juego (RunBinding), así abre el panel correcto de ESTE cliente:
---   bind = nombres de binding por orden; vale el primero que existe (se comprueba con BINDING_NAME_<bind>).
---   fn   = alternativas si no hay binding: { "Funcion" o "Tabla.Funcion", arg1, arg2... }.
+-- Cada acción prueba, por orden, funciones del propio juego y, si no, su atajo nativo (RunBinding):
+--   fn   = { "Funcion" o "Tabla.Funcion", arg1, arg2... }; vale la primera que existe y no da error.
+--   bind = nombres de binding; se comprueba que existan con BINDING_NAME_<bind>.
 -- /qw check muestra qué ruta usa cada entrada en tu cliente.
 ----------------------------------------------------------------------------------------------------
 local ICON = "Interface\\Icons\\"
@@ -72,19 +72,33 @@ ns.Catalog = {
 	{ id = "guild",        name = "Hermandad",             icon = ICON .. "INV_Shirt_GuildTabard_01",  default = true,
 		bind = { "TOGGLEGUILDTAB" },
 		fn = { { "ToggleGuildFrame" }, { "ToggleFriendsFrame", 3 } } },
+	{ id = "friends",      name = "Amigos",                icon = ICON .. "INV_Misc_GroupLooking",     default = true,
+		bind = { "TOGGLESOCIAL", "TOGGLEFRIENDSTAB" },
+		fn = { { "ToggleFriendsFrame", 1 } } },
 	{ id = "bags",         name = "Bolsas",                icon = ICON .. "INV_Misc_Bag_08",           default = true,
 		bind = { "OPENALLBAGS" },
 		fn = { { "ToggleAllBags" } } },
-	{ id = "achievements", name = "Logros",                icon = ICON .. "Achievement_General",       default = true,
+	{ id = "achievements", name = "Logros",                icon = ICON .. "Achievement_General",       default = true, noForever = true,
 		bind = { "TOGGLEACHIEVEMENT" },
 		fn = { { "ToggleAchievementFrame" } } },
-	{ id = "lfd",          name = "Buscador de mazmorras", icon = ICON .. "INV_Misc_GroupLooking",     default = false,
+	{ id = "lfd",          name = "Buscador de mazmorras", icon = ICON .. "INV_Misc_GroupLooking",     default = false, noForever = true,
 		bind = { "TOGGLEGROUPFINDER", "TOGGLELFGPARENT" },
 		fn = { { "PVEFrame_ToggleFrame" }, { "ToggleLFDParentFrame" } } },
 	{ id = "pets",         name = "Mascotas y monturas",   icon = ICON .. "Ability_Mount_RidingHorse", default = false,
 		bind = { "TOGGLEMOUNTJOURNAL", "TOGGLECOLLECTIONS", "TOGGLEPETBOOK" },
 		fn = { { "ToggleCollectionsJournal" }, { "ToggleCharacter", "PetPaperDollFrame" } } },
 }
+
+-- WoW Forever no tiene todos los paneles: las entradas marcadas noForever no existen allí y se ocultan.
+ns.IsForever = (WOW_PROJECT_CAMELOT and WOW_PROJECT_ID == WOW_PROJECT_CAMELOT)
+	or (WOW_PROJECT_FOREVER and WOW_PROJECT_ID == WOW_PROJECT_FOREVER) or false
+if ns.IsForever then
+	local kept = {}
+	for _, entry in ipairs(ns.Catalog) do
+		if not entry.noForever then kept[#kept + 1] = entry end
+	end
+	ns.Catalog = kept
+end
 
 ns.CatalogByID = {}
 for _, entry in ipairs(ns.Catalog) do ns.CatalogByID[entry.id] = entry end
@@ -97,6 +111,20 @@ ns.Presets = {
 	{ name = "Blanco",       1.00, 1.00, 1.00 },
 }
 
+-- Categorías de la lista de opciones: integradas = "menu"; propias = "emote" o "command".
+ns.Categories = { { id = "menu", name = "Menú" }, { id = "emote", name = "Emotes" }, { id = "command", name = "Comandos" } }
+function ns.CatOf(entry) return entry.custom and (entry.cat or "command") or "menu" end
+
+-- Emotes predefinidos (nombre, señal de DoEmote, icono). Se añaden como entradas propias editables.
+ns.Emotes = {
+	{ "Bailar", "DANCE", "INV_Misc_Note_01" },       { "Saludar", "WAVE", "INV_Misc_Note_01" },
+	{ "Reír", "LAUGH", "Spell_Holy_Heal" },          { "Vitorear", "CHEER", "Ability_Warrior_BattleShout" },
+	{ "Sentarse", "SIT", "INV_Misc_Note_01" },       { "Inclinarse", "BOW", "INV_Misc_Note_01" },
+	{ "Besar", "KISS", "Spell_Holy_Heal" },          { "Llorar", "CRY", "INV_Misc_Note_01" },
+	{ "Señalar", "POINT", "INV_Misc_Note_01" },      { "Dar las gracias", "THANK", "Spell_Holy_Heal" },
+	{ "Rugir", "ROAR", "Ability_Warrior_BattleShout" }, { "Aplaudir", "APPLAUD", "Ability_Warrior_BattleShout" },
+}
+
 -- Icono de una entrada: ruta completa, ID numérico o nombre dentro de Interface\Icons.
 function ns.IconPath(icon)
 	if not icon or icon == "" then return ICON .. "INV_Misc_QuestionMark" end
@@ -107,6 +135,11 @@ end
 
 -- Entrada propia: emotes, /run <código Lua> y comandos de otros addons. Blizzard bloquea /cast y /use a los addons.
 local function RunCommand(entry)
+	if entry.emote then
+		local ok, err = pcall(DoEmote, entry.emote)
+		if not ok then ns.Print("Error en " .. entry.name .. ": " .. tostring(err)) end
+		return
+	end
 	local text = strtrim(entry.command or "")
 	if text == "" then ns.Print(entry.name .. ": no tiene comando (edítala en /qw)."); return end
 	local cmd, code = text:match("^/(%a+)%s+(.*)$")
@@ -122,19 +155,19 @@ local function RunCommand(entry)
 	if not ok then ns.Print("Error en " .. entry.name .. ": " .. tostring(err)) end
 end
 
--- Rutas posibles de la entrada en este cliente, por orden: atajos nativos que existen y luego funciones.
+-- Rutas posibles de la entrada en este cliente, por orden: funciones que existen y luego atajos nativos (RunBinding).
 local function Routes(entry)
 	local routes = {}
-	for _, b in ipairs(entry.bind) do
-		if _G["BINDING_NAME_" .. b] then
-			routes[#routes + 1] = { label = "binding " .. b, run = function() RunBinding(b) end }
-		end
-	end
 	for _, spec in ipairs(entry.fn) do
 		local f = _G
 		for part in spec[1]:gmatch("[^.]+") do f = type(f) == "table" and f[part] or nil end
 		if type(f) == "function" then
 			routes[#routes + 1] = { label = "fn " .. spec[1], run = function() f(unpack(spec, 2)) end }
+		end
+	end
+	for _, b in ipairs(entry.bind) do
+		if _G["BINDING_NAME_" .. b] then
+			routes[#routes + 1] = { label = "binding " .. b, run = function() RunBinding(b) end }
 		end
 	end
 	return routes
@@ -170,7 +203,7 @@ end
 -- QuickWheelDB
 --   (aspecto global) radius, iconSize, deadzone, bgAlpha, accent, sound, anim
 --   profiles[1..4] = { name, items = { { id, on }... } }   -- una por rueda; puede haber huecos
---   custom[id]     = { id, name, icon, command, custom = true }   -- entradas propias (comunes a todas las ruedas)
+--   custom[id]     = { id, name, icon, command, cat, emote, custom = true }   -- entradas propias (comunes a todas las ruedas)
 --   selected       = rueda que muestra la ventana de configuración
 ----------------------------------------------------------------------------------------------------
 local defaults = {
@@ -242,11 +275,13 @@ function ns.DeleteProfile(i)
 	if ns.db.selected == i then ns.db.selected = 1 end
 end
 
-function ns.AddCustom(name, icon, command, profile)
+-- fields = { name, icon, command, cat, emote }; se activa solo en la rueda `profile`.
+function ns.AddCustom(fields, profile)
 	local db = ns.db
 	db.nextId = (db.nextId or 0) + 1
 	local id = "c" .. db.nextId
-	db.custom[id] = { id = id, name = name, icon = icon, command = command, custom = true }
+	db.custom[id] = { id = id, name = fields.name, icon = fields.icon, command = fields.command,
+		cat = fields.cat, emote = fields.emote, custom = true }
 	for i = 1, ns.MAX_PROFILES do
 		local p = db.profiles[i]
 		if p then p.items[#p.items + 1] = { id = id, on = (i == profile) } end

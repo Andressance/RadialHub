@@ -1,4 +1,5 @@
--- QuickWheel · Config: ventana de configuración (/qw): ruedas (perfiles), atajo, opciones, entradas propias y aspecto.
+-- QuickWheel · Config: ventana de configuración (/qw): ruedas (perfiles), atajo, opciones por categorías,
+-- entradas propias (emotes, comandos) y aspecto.
 -- Widgets propios (botones planos, sliders, checks, lista con scroll) para un aspecto oscuro y limpio.
 -- La ventana se redimensiona (esquina inferior derecha); la lista muestra tantas filas como quepan.
 local addonName, ns = ...
@@ -10,15 +11,15 @@ local WHITE = "Interface\\Buttons\\WHITE8X8"
 local FONT = STANDARD_TEXT_FONT or "Fonts\\FRIZQT__.TTF"
 local BD = { bgFile = WHITE, edgeFile = WHITE, edgeSize = 1, insets = { left = 1, right = 1, top = 1, bottom = 1 } }
 
-local ROW_H, POOL = 28, 16      -- alto de fila y filas máximas (POOL >= filas visibles con la ventana al máximo)
-local LIST_TOP = -200           -- y de la primera fila dentro de `left`
-local CHROME = 46 + 24 + 200 + 34 -- alto fijo alrededor de la lista (cabecera, pie, botones)
+local ROW_H, POOL = 28, 16        -- alto de fila y filas máximas (POOL >= filas visibles con la ventana al máximo)
+local LIST_TOP = -212             -- y de la primera fila dentro de `left`
+local CHROME = 46 + 24 + 212 + 34 -- alto fijo alrededor de la lista (cabecera, pie, botones)
 local MIN_W, MIN_H, MAX_W, MAX_H = 720, 480, 1100, 900
 
-local frame, left, right, editor
-local keyBtn, keyHint, soundCheck, animCheck, nameBox, delBtn, addBtn, countText, track, thumb
-local tabs, rows, sliders, swatches = {}, {}, {}, {}
-local capturing, delArmed, offset = false, false, 0
+local frame, left, right, editor, picker
+local keyBtn, keyHint, soundCheck, animCheck, nameBox, delBtn, countText, track, thumb
+local tabs, filterTabs, rows, sliders, swatches = {}, {}, {}, {}, {}
+local capturing, delArmed, offset, filter = false, false, 0, nil -- filter: nil (todo) | "menu" | "emote" | "command"
 
 ----------------------------------------------------------------------------------------------------
 -- Widgets
@@ -66,13 +67,13 @@ local function Edit(parent, w)
 	e:SetBackdrop(BD)
 	e:SetBackdropColor(0.02, 0.02, 0.03, 1)
 	e:SetBackdropBorderColor(0.3, 0.3, 0.36, 1)
-	e:SetFont(FONT, 12)
+	e:SetFontObject(ChatFontNormal)
 	e:SetTextColor(0.95, 0.95, 0.95)
 	e:SetTextInsets(6, 6, 0, 0)
 	e:SetAutoFocus(false)
 	e:SetMaxLetters(255)
-	e:SetScript("OnEscapePressed", e.ClearFocus)
-	e:SetScript("OnEnterPressed", e.ClearFocus)
+	e:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
+	e:SetScript("OnEnterPressed", function(self) self:ClearFocus() end)
 	return e
 end
 
@@ -98,28 +99,39 @@ end
 
 local function Visible() return max(1, min(POOL, floor((frame:GetHeight() - CHROME) / ROW_H))) end
 
+-- Posiciones (en profile.items) de las entradas que pasan el filtro de categoría, en orden.
+local function View()
+	local v = {}
+	for i, it in ipairs(Profile().items) do
+		if not filter or ns.CatOf(ns.Entry(it.id)) == filter then v[#v + 1] = i end
+	end
+	return v
+end
+
 ----------------------------------------------------------------------------------------------------
 -- Refresco
 ----------------------------------------------------------------------------------------------------
 local function RefreshList()
-	local db = ns.db
 	local items = Profile().items
-	local n, vis = #items, Visible()
+	local view = View()
+	local n, vis = #view, Visible()
 	offset = max(0, min(offset, n - vis))
 	for r = 1, POOL do
-		local row, idx = rows[r], offset + r
-		local it = items[idx]
-		if r <= vis and it then
+		local pos = offset + r
+		local idx = view[pos]
+		local row = rows[r]
+		if r <= vis and idx then
+			local it = items[idx]
 			local entry = ns.Entry(it.id)
-			row.idx, row.item = idx, it
+			row.idx, row.pos, row.view, row.item = idx, pos, view, it
 			ns.Circle(row.icon, ns.IconPath(entry.icon))
 			row.name:SetText(entry.name)
 			local c = entry.custom and { 0.7, 0.85, 1 } or { 0.95, 0.95, 0.95 }
 			row.name:SetTextColor(it.on and c[1] or 0.45, it.on and c[2] or 0.45, it.on and c[3] or 0.5)
 			row.icon:SetVertexColor(it.on and 1 or 0.4, it.on and 1 or 0.4, it.on and 1 or 0.4)
 			row.check:SetChecked(it.on)
-			SetEnabled(row.up, idx > 1)
-			SetEnabled(row.down, idx < n)
+			SetEnabled(row.up, pos > 1)
+			SetEnabled(row.down, pos < n)
 			if entry.custom then row.edit:Show() else row.edit:Hide() end
 			row:Show()
 		else
@@ -138,7 +150,7 @@ local function RefreshList()
 		track:Hide(); thumb:Hide()
 	end
 	local on = CountOn(Profile())
-	countText:SetText(on .. "/" .. ns.MAX_SLOTS .. " en la rueda")
+	countText:SetText(on .. "/" .. ns.MAX_SLOTS .. " activas")
 	countText:SetTextColor(on >= ns.MAX_SLOTS and 1 or 0.55, on >= ns.MAX_SLOTS and 0.5 or 0.55, on >= ns.MAX_SLOTS and 0.3 or 0.6)
 end
 
@@ -172,6 +184,10 @@ local function Refresh()
 	keyBtn.label:SetText(capturing and "Pulsa una tecla..." or (key or "Sin asignar"))
 	keyHint:SetText("Tecla de la rueda " .. sel .. ": mantén, apunta y suelta.")
 
+	for _, ft in ipairs(filterTabs) do
+		local on = (ft.cat == filter)
+		ft:SetBackdropBorderColor(on and a[1] or 0.3, on and a[2] or 0.3, on and a[3] or 0.36, 1)
+	end
 	RefreshList()
 
 	for _, s in ipairs(sliders) do
@@ -234,21 +250,31 @@ local function OpenColorPicker()
 end
 
 ----------------------------------------------------------------------------------------------------
--- Editor de entradas propias (nombre, icono, comando)
+-- Ventanitas: editor de entradas propias y selector de emotes
 ----------------------------------------------------------------------------------------------------
-local function BuildEditor()
-	editor = CreateFrame("Frame", nil, frame, "BackdropTemplate")
-	editor:SetWidth(430); editor:SetHeight(320)
-	editor:SetPoint("CENTER", frame, "CENTER", 0, 0)
-	editor:SetFrameStrata("DIALOG")
-	editor:EnableMouse(true)
-	editor:SetBackdrop(BD)
-	editor:SetBackdropColor(0.08, 0.08, 0.1, 1)
-	editor:SetBackdropBorderColor(0.4, 0.4, 0.46, 1)
-	editor:Hide()
+local function Popup(w, h)
+	local f = CreateFrame("Frame", nil, frame, "BackdropTemplate")
+	f:SetWidth(w); f:SetHeight(h)
+	f:SetPoint("CENTER", frame, "CENTER", 0, 0)
+	f:SetFrameStrata("DIALOG")
+	f:EnableMouse(true)
+	f:SetBackdrop(BD)
+	f:SetBackdropColor(0.08, 0.08, 0.1, 1)
+	f:SetBackdropBorderColor(0.4, 0.4, 0.46, 1)
+	f:Hide()
+	f.title = Text(f, 14, 1, 0.82, 0.2)
+	f.title:SetPoint("TOPLEFT", f, "TOPLEFT", 16, -14)
+	return f
+end
 
-	editor.title = Text(editor, 14, 1, 0.82, 0.2)
-	editor.title:SetPoint("TOPLEFT", editor, "TOPLEFT", 16, -14)
+-- Entrada nueva (o editada) y salto a su categoría al final de la lista.
+local function Added(cat)
+	filter, offset = cat, 1e9
+	Refresh()
+end
+
+local function BuildEditor()
+	editor = Popup(430, 320)
 
 	local function Field(label, y, w)
 		Text(editor, 11, 0.7, 0.7, 0.75, label):SetPoint("TOPLEFT", editor, "TOPLEFT", 16, y)
@@ -266,7 +292,7 @@ local function BuildEditor()
 	editor.cmd = Field("Comando (una línea)", -138, 398)
 
 	local hint = Text(editor, 10, 0.55, 0.55, 0.6,
-		"Ejemplos: /dance  ·  /run ToggleCollectionsJournal()  ·  /dbm pull 10. Sirve cualquier emote, script (/run) o comando de otro addon. " ..
+		"Ejemplos: /run ToggleCollectionsJournal()  ·  /dbm pull 10  ·  /reload. Sirve cualquier script (/run) o comando de otro addon. " ..
 		"Blizzard bloquea /cast, /use y las macros a los addons, así que hechizos y objetos no funcionan desde aquí.")
 	hint:SetWidth(398); hint:SetWordWrap(true)
 	hint:SetPoint("TOPLEFT", editor, "TOPLEFT", 16, -192)
@@ -277,15 +303,17 @@ local function BuildEditor()
 		local name = strtrim(editor.name:GetText())
 		if name == "" then name = "Sin nombre" end
 		local icon, cmd = strtrim(editor.icon:GetText()), strtrim(editor.cmd:GetText())
+		local cat
 		if editor.id then
 			local e = ns.db.custom[editor.id]
 			e.name, e.icon, e.command = name, icon, cmd
+			cat = filter
 		else
-			ns.AddCustom(name, icon, cmd, ns.db.selected)
-			offset = 1e9 -- salta al final de la lista, donde queda la nueva
+			ns.AddCustom({ name = name, icon = icon, command = cmd, cat = "command" }, ns.db.selected)
+			cat = "command"
 		end
 		editor:Hide()
-		Refresh()
+		if editor.id then Refresh() else Added(cat) end
 	end)
 	local cancel = Flat(editor, 90, 24, "Cancelar")
 	cancel:SetPoint("LEFT", editor.save, "RIGHT", 8, 0)
@@ -306,15 +334,39 @@ end
 
 local function OpenEditor(id)
 	if not editor then BuildEditor() end
+	if picker then picker:Hide() end
 	local e = id and ns.db.custom[id]
 	editor.id, editor.delArmed = id, false
-	editor.title:SetText(e and "Editar entrada" or "Nueva entrada")
+	editor.title:SetText(e and "Editar entrada" or "Nuevo comando")
 	editor.name:SetText(e and e.name or "")
 	editor.icon:SetText(e and e.icon or "")
 	editor.cmd:SetText(e and e.command or "")
 	editor.del.label:SetText("Eliminar entrada")
 	if e then editor.del:Show() else editor.del:Hide() end
 	editor:Show()
+end
+
+local function OpenPicker()
+	if not picker then
+		picker = Popup(430, 60 + 4 * 30 + 50)
+		picker.title:SetText("Añadir emote")
+		for i, e in ipairs(ns.Emotes) do
+			local b = Flat(picker, 124, 24, e[1])
+			b:SetPoint("TOPLEFT", picker, "TOPLEFT", 16 + ((i - 1) % 3) * 130, -46 - floor((i - 1) / 3) * 30)
+			b:SetScript("OnClick", function()
+				ns.AddCustom({ name = e[1], icon = e[3], command = "", cat = "emote", emote = e[2] }, ns.db.selected)
+				picker:Hide()
+				Added("emote")
+			end)
+		end
+		local close = Flat(picker, 90, 24, "Cerrar")
+		close:SetPoint("BOTTOMLEFT", picker, "BOTTOMLEFT", 16, 16)
+		close:SetScript("OnClick", function() picker:Hide() end)
+		local hint = Text(picker, 10, 0.55, 0.55, 0.6, "Después puedes cambiar su nombre o icono con Editar.")
+		hint:SetPoint("LEFT", close, "RIGHT", 12, 0)
+	end
+	if editor then editor:Hide() end
+	picker:Show()
 end
 
 ----------------------------------------------------------------------------------------------------
@@ -354,10 +406,11 @@ local function MakeRow(r)
 	row.name:SetPoint("LEFT", row.icon, "RIGHT", 8, 0)
 	row.name:SetPoint("RIGHT", row.edit, "LEFT", -6, 0)
 
-	local function Move(d)
+	local function Move(d) -- intercambia con la vecina visible (respeta el filtro de categoría)
+		local other = row.view[row.pos + d]
+		if not other then return end
 		local items = Profile().items
-		local i = row.idx
-		items[i], items[i + d] = items[i + d], items[i]
+		items[row.idx], items[other] = items[other], items[row.idx]
 		Refresh()
 	end
 	row.up:SetScript("OnClick", function() Move(-1) end)
@@ -417,6 +470,7 @@ local function Build()
 	frame:SetScript("OnHide", function()
 		if capturing then StopCapture() end
 		if editor then editor:Hide() end
+		if picker then picker:Hide() end
 		delArmed = false
 	end)
 	frame:RegisterEvent("UPDATE_BINDINGS")
@@ -513,9 +567,20 @@ local function Build()
 	keyHint = Text(left, 10, 0.55, 0.55, 0.6)
 	keyHint:SetPoint("TOPLEFT", left, "TOPLEFT", 0, -144)
 
-	-- Izquierda: opciones (lista con scroll)
+	-- Izquierda: opciones por categorías (lista con scroll)
 	Section(left, "Opciones de la rueda", -162)
-	Text(left, 10, 0.55, 0.55, 0.6, "La 1ª va arriba; el resto, en sentido horario."):SetPoint("TOPLEFT", left, "TOPLEFT", 0, -184)
+	local order = Text(left, 10, 0.55, 0.55, 0.6, "1ª arriba, luego en sentido horario")
+	order:SetJustifyH("RIGHT")
+	order:SetPoint("TOPRIGHT", left, "TOPRIGHT", 0, -164)
+	local cats = { { nil, "Todo" } }
+	for _, c in ipairs(ns.Categories) do cats[#cats + 1] = { c.id, c.name } end
+	for i, c in ipairs(cats) do
+		local ft = Flat(left, 74, 20, c[2])
+		ft.cat = c[1]
+		ft:SetPoint("TOPLEFT", left, "TOPLEFT", (i - 1) * 78, -186)
+		ft:SetScript("OnClick", function() filter, offset = ft.cat, 0; Refresh() end)
+		filterTabs[i] = ft
+	end
 	for r = 1, POOL do MakeRow(r) end
 	track = left:CreateTexture(nil, "ARTWORK")
 	track:SetTexture(WHITE); track:SetVertexColor(1, 1, 1, 0.08)
@@ -524,9 +589,12 @@ local function Build()
 	thumb = left:CreateTexture(nil, "OVERLAY")
 	thumb:SetTexture(WHITE); thumb:SetVertexColor(1, 1, 1, 0.35)
 	thumb:SetWidth(4)
-	addBtn = Flat(left, 150, 24, "+ Añadir comando")
-	addBtn:SetPoint("BOTTOMLEFT", left, "BOTTOMLEFT", 0, 0)
-	addBtn:SetScript("OnClick", function() OpenEditor(nil) end)
+	local addEmote = Flat(left, 90, 24, "+ Emote")
+	addEmote:SetPoint("BOTTOMLEFT", left, "BOTTOMLEFT", 0, 0)
+	addEmote:SetScript("OnClick", OpenPicker)
+	local addCmd = Flat(left, 100, 24, "+ Comando")
+	addCmd:SetPoint("LEFT", addEmote, "RIGHT", 6, 0)
+	addCmd:SetScript("OnClick", function() OpenEditor(nil) end)
 	countText = Text(left, 10, 0.55, 0.55, 0.6)
 	countText:SetPoint("BOTTOMRIGHT", left, "BOTTOMRIGHT", 0, 6)
 
@@ -574,7 +642,14 @@ local function Build()
 end
 
 function Config.Toggle()
-	if not frame then Build() end
+	if not frame then
+		local ok, err = pcall(Build)
+		if not ok then -- si falla, que se vea el motivo y no quede una ventana a medias
+			ns.Print("error al crear la ventana: " .. tostring(err))
+			if frame then frame:Hide(); frame = nil end
+			return
+		end
+	end
 	if frame:IsShown() then frame:Hide() else frame:Show() end
 end
 
