@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.5.0
+
+- Más idiomas: Deutsch, Français, Italiano y Português se pueden elegir en `/rh`. Русский, 한국어 y 中文 se usan en modo Automático cuando el juego está en ese idioma (su alfabeto solo existe en la fuente de ese cliente).
+- Las traducciones son automáticas: si ves algo raro, avísanos. Lo que falte en un idioma se muestra en inglés.
+
 ## 0.4.0
 
 - Nuevo: selector de idioma en `/rh` (Automático según el cliente, Español o English). Afecta a la rueda, la configuración y los mensajes.

@@ -353,6 +353,31 @@ check(printed[#printed]:find("wheel 9 doesn't exist"), "prints use the language"
 ns.SetLanguage("es")
 check(ns.L("Personaje") == "Personaje", "back to Spanish")
 
+-- 12b. every language has every key, with the same format specifiers in the same order (else string.format breaks)
+local function specs(t) local r = {} for sp in t:gmatch("%%[%a%%]") do r[#r + 1] = sp end return table.concat(r) end
+for code, tbl in pairs(ns.Translations) do
+	for key in pairs(ns.EN) do
+		check(tbl[key], code .. " is missing '" .. key .. "'")
+		check(specs(tbl[key]) == specs(key), code .. ": format specifiers differ in '" .. key .. "'")
+	end
+	for key in pairs(tbl) do check(ns.EN[key] or key == "Emotes" or key == "+ Emote", code .. " has an unknown key '" .. key .. "'") end
+end
+for _, opt in ipairs(ns.SelectableLanguages) do
+	check(opt[1] == "auto" or opt[1] == "es" or ns.Translations[opt[1]], "selectable language without table: " .. opt[1])
+	check(opt[1] ~= "ru" and opt[1] ~= "ko" and opt[1] ~= "zh", "non-latin languages are auto-only")
+end
+local oldLocale = GetLocale
+GetLocale = function() return "deDE" end
+ns.SetLanguage(nil)
+check(ns.lang == "de" and ns.L("Personaje") == "Charakter", "auto picks the client language")
+GetLocale = function() return "zhTW" end
+ns.SetLanguage(nil)
+check(ns.lang == "en", "unsupported client language falls back to English")
+GetLocale = oldLocale
+ns.SetLanguage("fr")
+check(ns.L("la rueda %d no existe. Créala en /rh.", 2) == "la roue 2 n'existe pas. Créez-la dans /rh.", "French with format")
+ns.SetLanguage("es")
+
 -- 13. the map opens through the zone text button of the minimap (a child key, not a global)
 MinimapCluster = { ZoneTextButton = newFrame() }
 check(ns.Available(ns.CatalogByID.map) and select(2, ns.SecureButton(ns.CatalogByID.map)) == "MinimapCluster.ZoneTextButton", "map via MinimapCluster.ZoneTextButton")

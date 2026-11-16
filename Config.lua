@@ -16,7 +16,7 @@ local BD = { bgFile = WHITE, edgeFile = WHITE, edgeSize = 1, insets = { left = 1
 local ROW_H, POOL = 28, 16        -- alto de fila y filas máximas (POOL >= filas visibles con la ventana al máximo)
 local LIST_TOP = -212             -- y de la primera fila dentro de `left`
 local CHROME = 46 + 24 + 212 + 34 -- alto fijo alrededor de la lista (cabecera, pie, botones)
-local MIN_W, MIN_H, MAX_W, MAX_H = 720, 520, 1100, 900
+local MIN_W, MIN_H, MAX_W, MAX_H = 720, 560, 1100, 900
 
 local frame, left, right, editor, picker
 local keyBtn, keyHint, soundCheck, animCheck, nameBox, delBtn, countText, track, thumb
@@ -466,7 +466,7 @@ end
 local function Build()
 	local db = ns.db
 	frame = CreateFrame("Frame", "RadialHubConfig", UIParent, "BackdropTemplate")
-	frame:SetWidth(db.winW or 780); frame:SetHeight(db.winH or 600)
+	frame:SetWidth(db.winW or 780); frame:SetHeight(max(db.winH or 600, MIN_H))
 	frame:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
 	frame:SetFrameStrata("DIALOG") -- por encima del panel de Opciones; el selector de color (toplevel) sube al mostrarse
 	frame:SetToplevel(true)
@@ -661,10 +661,10 @@ local function Build()
 	animCheck:SetScript("OnClick", function(self) ns.db.anim = self:GetChecked() and true or false end)
 	Text(right, 12, 0.9, 0.9, 0.9, "Animación"):SetPoint("LEFT", animCheck, "RIGHT", 4, 0)
 
-	Text(right, 12, 0.9, 0.9, 0.9, "Idioma"):SetPoint("TOPLEFT", right, "TOPLEFT", 4, -344)
-	for i, opt in ipairs({ { "auto", "Automático" }, { "es", "Español" }, { "en", "English" } }) do
-		local b = Flat(right, 72, 22, opt[2])
-		b:SetPoint("TOPLEFT", right, "TOPLEFT", 64 + (i - 1) * 76, -340)
+	Text(right, 12, 0.9, 0.9, 0.9, "Idioma"):SetPoint("TOPLEFT", right, "TOPLEFT", 4, -340)
+	for i, opt in ipairs(ns.SelectableLanguages) do -- ruso, coreano y chino: solo en Automático (fuente del cliente)
+		local b = Flat(right, 70, 22, opt[2])
+		b:SetPoint("TOPLEFT", right, "TOPLEFT", 4 + ((i - 1) % 4) * 74, -360 - floor((i - 1) / 4) * 26)
 		b.lang = opt[1]
 		b:SetScript("OnClick", function()
 			ns.db.lang = opt[1] ~= "auto" and opt[1] or nil
