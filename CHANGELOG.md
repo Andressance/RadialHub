@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.0
+
+- Optimización de CPU. La detección de la tecla mantenida ya no crea tablas ni cadenas en cada fotograma: las teclas asignadas se analizan una vez (al entrar y cuando cambian los atajos) y, si no hay ninguna asignada, no se ejecuta nada.
+- La rueda abierta solo redibuja mientras hay algo que animar (apertura, cambio de opción, flechas); quieta, solo comprueba el cursor. Las direcciones de los huecos se calculan una vez al abrirla.
+
 ## 0.2.8
 
 - Eliminado el `RegisterStateDriver` y el `SecureHandlerStateTemplate` del botón seguro: contaminaban el gestor de estados de Blizzard, que también cambia la barra de acción al cambiar de forma. Era la causa probable de que, pasado un rato de sesión, aparecieran errores de valores secretos en las barras de acción y la barra no cambiara al transformarse.

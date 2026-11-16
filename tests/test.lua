@@ -280,4 +280,27 @@ check(RadialHubConfig, "config frame created")
 for _, m in ipairs(printed) do check(not m:find("error al crear"), "config build error: " .. m) end
 RadialHubConfig.scripts.OnShow(RadialHubConfig)
 
+-- 11. key polling: opens on the bound key, releases on let go, and allocates nothing per frame when idle
+local altDown = false
+IsAltKeyDown = function() return altDown end
+IsControlKeyDown = function() return false end
+IsShiftKeyDown = function() return false end
+ns.RefreshWatchedKeys() -- every wheel is bound to ALT-Q in this mock
+local monitor
+for _, f in ipairs(frames) do if f.scripts.OnUpdate and f ~= wheel then monitor = f end end
+check(monitor, "key monitor frame found")
+cursor[1], cursor[2] = 500, 400
+altDown, keyDown.Q = true, true
+monitor.scripts.OnUpdate(monitor, 0.016)
+check(wheel:IsShown(), "holding ALT-Q opens the wheel")
+altDown, keyDown.Q = false, nil
+monitor.scripts.OnUpdate(monitor, 0.016)
+check(not wheel:IsShown(), "letting go closes it")
+collectgarbage("collect"); collectgarbage("stop")
+local before = collectgarbage("count")
+for _ = 1, 10000 do monitor.scripts.OnUpdate(monitor, 0.016) end
+local grown = collectgarbage("count") - before
+collectgarbage("restart")
+check(grown < 1, "idle polling allocates nothing (grew " .. grown .. " KB over 10000 frames)")
+
 print("ok")

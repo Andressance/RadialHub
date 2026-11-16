@@ -351,6 +351,7 @@ function ns.BindKey(key, i)
 	for _, old in ipairs({ GetBindingKey(binding) }) do SetBinding(old) end
 	if not SetBindingClick(key, "RadialHubSecureInput" .. i, "LeftButton") then return false end
 	SaveBindings(GetCurrentBindingSet())
+	ns.RefreshWatchedKeys()
 	if prev and prev ~= "" and prev ~= binding then
 		ns.Print(GetBindingText(key, "KEY_") .. " estaba asignada a " .. (_G["BINDING_NAME_" .. prev] or prev) .. "; ahora abre la rueda " .. i .. ".")
 	end
@@ -361,6 +362,7 @@ function ns.ClearKey(i)
 	if InCombatLockdown() then ns.Print("No se puede cambiar el atajo en combate."); return end
 	for _, old in ipairs({ GetBindingKey(ns.BINDINGS[i]) }) do SetBinding(old) end
 	SaveBindings(GetCurrentBindingSet())
+	ns.RefreshWatchedKeys()
 end
 
 -- Lo llama Bindings.xml: "down" abre la rueda i, "up" ejecuta la opción apuntada.
@@ -376,8 +378,11 @@ local events = CreateFrame("Frame")
 events:RegisterEvent("ADDON_LOADED")
 events:RegisterEvent("PLAYER_LOGIN")
 events:RegisterEvent("PLAYER_REGEN_ENABLED")
+events:RegisterEvent("UPDATE_BINDINGS")
 events:SetScript("OnEvent", function(_, event, arg1)
-	if event == "PLAYER_REGEN_ENABLED" then
+	if event == "UPDATE_BINDINGS" then
+		if ns.RefreshWatchedKeys then ns.RefreshWatchedKeys() end
+	elseif event == "PLAYER_REGEN_ENABLED" then
 		-- los atributos seguros no se pueden cambiar en combate: al salir, se limpia cualquier acción que quedara armada
 		for i = 1, ns.MAX_PROFILES do ns.SetSecureCharacterAction(i, false) end
 	elseif event == "ADDON_LOADED" and arg1 == addonName then
@@ -385,6 +390,7 @@ events:SetScript("OnEvent", function(_, event, arg1)
 		ns.db = RadialHubDB
 		Fill(ns.db)
 	elseif event == "PLAYER_LOGIN" then
+		ns.RefreshWatchedKeys()
 		for i = 1, ns.MAX_PROFILES do
 			if not GetBindingKey(ns.BINDINGS[i]) then
 				for _, legacy in ipairs(ns.LEGACY_BINDINGS[i]) do
@@ -406,23 +412,40 @@ end)
 
 -- SecureActionButtonTemplate must not have addon OnClick scripts: they taint Blizzard's action-button cooldown path.
 local MOUSE_BUTTONS = { BUTTON1 = "LeftButton", BUTTON2 = "RightButton", BUTTON3 = "MiddleButton", BUTTON4 = "Button4", BUTTON5 = "Button5" }
-local heldProfiles, inputMonitor = {}, CreateFrame("Frame")
-local function BoundKeyDown(key)
-	local base = key:match("[^-]+$")
-	if not base
-		or (key:find("ALT-", 1, true) ~= nil) ~= (IsAltKeyDown() and true or false)
-		or (key:find("CTRL-", 1, true) ~= nil) ~= (IsControlKeyDown() and true or false)
-		or (key:find("SHIFT-", 1, true) ~= nil) ~= (IsShiftKeyDown() and true or false) then return false end
-	local mouseButton = MOUSE_BUTTONS[base]
-	if mouseButton then return IsMouseButtonDown(mouseButton) end
-	return IsKeyDown(base)
-end
-inputMonitor:SetScript("OnUpdate", function()
+-- Rendimiento: las teclas asignadas se analizan una vez (al entrar y en UPDATE_BINDINGS) y el sondeo por fotograma
+-- no crea tablas ni cadenas; sin ninguna tecla asignada, el marco se oculta y no corre nada.
+local heldProfiles, downNow, watched, inputMonitor = {}, {}, {}, CreateFrame("Frame")
+inputMonitor:Hide()
+
+function ns.RefreshWatchedKeys()
+	wipe(watched)
 	for i = 1, ns.MAX_PROFILES do
-		local down = false
 		for _, key in ipairs({ GetBindingKey(ns.BINDINGS[i]) }) do
-			if key and BoundKeyDown(key) then down = true; break end
+			local base = key:match("[^-]+$")
+			if base then
+				watched[#watched + 1] = {
+					profile = i, base = base, mouse = MOUSE_BUTTONS[base],
+					alt = key:find("ALT-", 1, true) ~= nil,
+					ctrl = key:find("CTRL-", 1, true) ~= nil,
+					shift = key:find("SHIFT-", 1, true) ~= nil,
+				}
+			end
 		end
+	end
+	if #watched > 0 or next(heldProfiles) then inputMonitor:Show() else inputMonitor:Hide() end
+end
+
+inputMonitor:SetScript("OnUpdate", function()
+	local alt, ctrl, shift = IsAltKeyDown() and true or false, IsControlKeyDown() and true or false, IsShiftKeyDown() and true or false
+	for i = 1, ns.MAX_PROFILES do downNow[i] = false end
+	for _, w in ipairs(watched) do
+		if not downNow[w.profile] and w.alt == alt and w.ctrl == ctrl and w.shift == shift then
+			if w.mouse then downNow[w.profile] = IsMouseButtonDown(w.mouse) and true or false
+			else downNow[w.profile] = IsKeyDown(w.base) and true or false end
+		end
+	end
+	for i = 1, ns.MAX_PROFILES do
+		local down = downNow[i]
 		if down and not heldProfiles[i] then
 			heldProfiles[i] = true
 			ns.Wheel.Open(i)

@@ -37,6 +37,8 @@ local openT, ia, indA = 0, 0, 0    -- progreso de apertura, ángulo e intensidad
 local armed, wasClick = false, false -- failsafe de tecla soltada / clic izquierdo previo
 local heldKeys = {}                -- teclas físicas del atajo (sin modificadores) para saber si sigue pulsado
 local secureCharacterSelected = false
+local slotCos, slotSin = {}, {}    -- dirección de cada hueco (se calcula en Layout, no en cada fotograma)
+local dirty = true                 -- hay algo que animar o redibujar; si no, OnUpdate solo mira el cursor
 
 local MOUSE = { BUTTON1 = "LeftButton", BUTTON2 = "RightButton", BUTTON3 = "MiddleButton", BUTTON4 = "Button4", BUTTON5 = "Button5" }
 
@@ -75,6 +77,7 @@ local function OnUpdate(_, dt)
 	local cx, cy = GetCursorPosition()
 	local scale = UIParent:GetEffectiveScale()
 	local dx, dy = cx / scale - ox, cy / scale - oy
+	local prevHover = hoverArrow
 	hoverArrow = nil
 	if multi then
 		for _, a in ipairs(arrows) do
@@ -99,9 +102,7 @@ local function OnUpdate(_, dt)
 	wasClick = click
 
 	local anim, n = db.anim, #list
-	openT = anim and min(1, openT + dt / OPEN_TIME) or 1
-	local e = 1 - (1 - openT) ^ 3 -- ease-out
-	frame:SetAlpha(e)
+	if hoverArrow ~= prevHover then dirty = true end
 
 	-- Selección
 	local idx = not hoverArrow and Wheel.SliceAt(dx, dy, n, dead) or nil
@@ -112,6 +113,7 @@ local function OnUpdate(_, dt)
 	end
 	if idx ~= selected then
 		selected = idx
+		dirty = true
 		if idx then
 			if db.sound then PlaySound(SOUND_TICK) end
 			label:SetText(list[idx].name)
@@ -122,6 +124,14 @@ local function OnUpdate(_, dt)
 		end
 	end
 
+	-- Rendimiento: con la rueda quieta (sin animación pendiente) no se toca ninguna textura.
+	if not dirty then return end
+	local settled = true
+	openT = anim and min(1, openT + dt / OPEN_TIME) or 1
+	if openT < 1 then settled = false end
+	local e = 1 - (1 - openT) ^ 3 -- ease-out
+	frame:SetAlpha(e)
+
 	-- Iconos: el apuntado crece, se tiñe de acento y brilla.
 	local k = min(1, dt * 16)
 	local r = R * (0.55 + 0.45 * e)
@@ -130,11 +140,11 @@ local function OnUpdate(_, dt)
 		local target = (i == selected) and 1 or 0
 		local h = anim and Lerp(b.h, target, k) or target
 		if abs(target - h) < 0.005 then h = target end
+		if h ~= target then settled = false end
 		b.h = h
 		local sc = 1 + 0.25 * h
-		local a = SlotAngle(i, n)
 		b:SetScale(sc)
-		b:SetPoint("CENTER", frame, "CENTER", cos(a) * r / sc, sin(a) * r / sc)
+		b:SetPoint("CENTER", frame, "CENTER", slotCos[i] * r / sc, slotSin[i] * r / sc)
 		b.ring:SetVertexColor(Lerp(0.32, ar, h), Lerp(0.32, ag, h), Lerp(0.36, ab, h), 0.9 + 0.1 * h)
 		local v = Lerp(0.65, 1, h)
 		b.icon:SetVertexColor(v, v, v)
@@ -147,11 +157,13 @@ local function OnUpdate(_, dt)
 		if indA < 0.02 or not anim then
 			ia = ta
 		else
-			ia = ia + ((ta - ia + pi) % TWO_PI - pi) * min(1, dt * 14)
+			local d = (ta - ia + pi) % TWO_PI - pi
+			if abs(d) < 0.002 then ia = ta else ia = ia + d * min(1, dt * 14); settled = false end
 		end
 	end
 	local indT = selected and 1 or 0
 	indA = anim and Lerp(indA, indT, min(1, dt * 14)) or indT
+	if abs(indT - indA) < 0.005 then indA = indT else settled = false end
 	local r0 = dead + 4
 	local r1 = max(r0 + 12, R * e - S * 0.625 - 2)
 	for j = 1, DOTS do
@@ -169,6 +181,7 @@ local function OnUpdate(_, dt)
 			a.text:SetTextColor(hot and 1 or 0.7, hot and 1 or 0.7, hot and 1 or 0.7)
 		end
 	end
+	dirty = not settled
 end
 
 local function EnsureSlots(n)
@@ -262,6 +275,11 @@ local function Layout(profile)
 	label:SetText("Cancelar")
 	label:SetTextColor(0.5, 0.5, 0.55)
 
+	for i = 1, #list do
+		local a = SlotAngle(i, #list)
+		slotCos[i], slotSin[i] = cos(a), sin(a)
+	end
+	dirty = true
 	for i, b in ipairs(slots) do
 		local entry = list[i]
 		if entry then
