@@ -6,7 +6,7 @@ math.atan2 = math.atan2 or function(y, x) return math.atan(y, x) end -- Lua 5.1 
 unpack = unpack or table.unpack
 tinsert = table.insert
 wipe = function(t) for k in pairs(t) do t[k] = nil end return t end
-strlower = string.lower
+strlower, strupper = string.lower, string.upper
 strtrim = function(s) return (s:gsub("^%s+", ""):gsub("%s+$", "")) end
 
 local function noop() end
@@ -59,29 +59,55 @@ local cursor = { 500, 400 }
 GetCursorPosition = function() return cursor[1], cursor[2] end
 
 local calls = {}
-RunBinding = function(name) calls[#calls + 1] = "binding:" .. name end
-securecallfunction = function(fn, ...) return fn(...) end
 RunScript = function(code) calls[#calls + 1] = "script:" .. code end
-ChatEdit_SendText = function(box) calls[#calls + 1] = "chat:" .. box:GetText() end
-for _, b in ipairs({ "TOGGLECHARACTER0", "TOGGLETALENTS", "TOGGLESPELLBOOK", "TOGGLEQUESTLOG", "TOGGLEWORLDMAP",
-	"TOGGLEGUILDTAB", "OPENALLBAGS", "TOGGLEACHIEVEMENT", "TOGGLESOCIAL" }) do
-	_G["BINDING_NAME_" .. b] = b
-end
+DoEmote = function(token) calls[#calls + 1] = "emote:" .. token end
+-- slash commands: one from an addon, one from Blizzard (secure variable) and a protected one
+SlashCmdList.DBM = function(msg) calls[#calls + 1] = "dbm:" .. msg end
+SLASH_DBM1 = "/dbm"
+SlashCmdList.MACRO = function() calls[#calls + 1] = "macro" end
+SLASH_MACRO1 = "/macro"
+issecurevariable = function(_, key) return key == "MACRO" end
+hash_SecureCmdList = { ["/CAST"] = noop }
+hash_EmoteTokenList = { ["/DANCE"] = "DANCE" }
+
+-- Blizzard buttons the panels click; the map one is missing in this "client" to test hiding
+local BUTTONS = { "CharacterMicroButton", "TalentMicroButton", "SpellbookMicroButton", "QuestLogMicroButton",
+	"GuildMicroButton", "SocialsMicroButton", "MainMenuBarBackpackButton", "CollectionsMicroButton" }
+for _, name in ipairs(BUTTONS) do newFrame(name) end
 
 -- WoW Forever: Logros y Buscador de mazmorras no existen y se ocultan
 WOW_PROJECT_ID, WOW_PROJECT_CAMELOT = 14, 14
-DoEmote = function(token) calls[#calls + 1] = "emote:" .. token end
 
 local ns = {}
-for _, file in ipairs({ "Core.lua", "Wheel.lua", "Config.lua" }) do assert(loadfile(file))("RadialHub", ns) end
+GetLocale = function() return "esES" end
+for _, file in ipairs({ "Locales.lua", "Core.lua", "Wheel.lua", "Config.lua" }) do assert(loadfile(file))("RadialHub", ns) end
 
 local function check(cond, msg) if not cond then error("FAIL: " .. msg, 2) end end
+local function eventFrame() -- Core's event frame: the first one with an OnEvent (the secure inputs come before it)
+	for _, f in ipairs(frames) do if f.scripts.OnEvent then return f end end
+end
 local function load(db)
 	RadialHubDB = db
-	local events -- Core's event frame: the first one with an OnEvent (the secure inputs come before it)
-	for _, f in ipairs(frames) do if f.scripts.OnEvent then events = f; break end end
+	local events = eventFrame()
 	events.scripts.OnEvent(events, "ADDON_LOADED", "RadialHub")
 	return RadialHubDB
+end
+local input = RadialHubSecureInput1
+local function armed() return input:GetAttribute("type1") == "click" and input:GetAttribute("clickbutton1") end
+
+-- 0. static taint audit: the code must not use any API that has tainted Blizzard's UI before
+local FORBIDDEN = { "UISpecialFrames", "HideUIPanel", "ShowUIPanel", "RunBinding", "ChatEdit_", "hooksecurefunc",
+	"HookScript", "RegisterStateDriver", "SecureHandler", "securecall", "RunMacro", "CastSpell", "UseAction", "SetCVar",
+	"Toggle%u%a*%(" }
+for _, file in ipairs({ "Core.lua", "Wheel.lua", "Config.lua" }) do
+	local n = 0
+	for line in io.lines(file) do
+		n = n + 1
+		local code = line:gsub("%-%-.*$", "") -- comments may name them
+		for _, bad in ipairs(FORBIDDEN) do
+			check(not code:find(bad), file .. ":" .. n .. " uses " .. bad .. " (taints Blizzard's UI)")
+		end
+	end
 end
 
 -- 1. polar math: 8 slots, #1 on top, clockwise
@@ -98,82 +124,69 @@ check(at(0, 100, 0, 30) == nil, "no slots")
 
 check(ns.IsForever and not ns.CatalogByID.achievements and not ns.CatalogByID.lfd and #ns.Catalog == 9, "Forever hides noForever entries")
 
--- 2. fresh install
+-- 2. fresh install; panels are available only when their Blizzard button exists
 local db = load(nil)
 check(#db.profiles[1].items == 9 and db.selected == 1, "profile 1 has the 9 built-ins")
-CharacterMicroButton = newFrame("CharacterMicroButton")
-ns.SetSecureCharacterAction(1, true)
-check(RadialHubSecureInput1:GetAttribute("type1") == "click" and RadialHubSecureInput1:GetAttribute("clickbutton1") == CharacterMicroButton,
-	"character uses a secure click target")
-ns.SetSecureCharacterAction(1, false)
-check(RadialHubSecureInput1:GetAttribute("type1") == nil, "secure character click is cleared")
--- leaving combat clears an action that was left armed (it cannot be cleared during combat)
-ns.SetSecureCharacterAction(1, true)
-local evFrame
-for _, f in ipairs(frames) do if f.scripts.OnEvent then evFrame = f; break end end
-evFrame.scripts.OnEvent(evFrame, "PLAYER_REGEN_ENABLED")
-check(RadialHubSecureInput1:GetAttribute("type1") == nil, "armed character click cleared after combat")
+check(not ns.Available(ns.CatalogByID.map) and ns.Available(ns.CatalogByID.quests), "map hidden: no button in this client")
+local active = ns.GetActive(1)
+check(#active == 7 and active[1].id == "character" and active[7].id == "bags", "7 default panels (map hidden), got " .. #active)
+check(ns.GetActive(2) == nil, "profile 2 does not exist yet")
+ns.SetSecureAction(1, ns.CatalogByID.character)
+check(armed() == CharacterMicroButton, "character uses a secure click on its micro button")
+ns.SetSecureAction(1, nil)
+check(input:GetAttribute("type1") == nil, "secure click cleared")
+ns.SetSecureAction(1, ns.CatalogByID.map)
+check(input:GetAttribute("type1") == nil, "nothing armed for a panel without a button")
 ns.BindKey("ALT-X", 1)
 check(bindingClick[1] == "ALT-X" and bindingClick[2] == "RadialHubSecureInput1", "wheel key is bound to its secure input button")
-local active = ns.GetActive(1)
-check(#active == 8 and active[1].id == "character" and active[8].id == "bags", "8 default entries in catalog order")
-check(ns.GetActive(2) == nil, "profile 2 does not exist yet")
 
 -- 3. migration from the single-wheel save (order/enabled), dropping a deleted id and appending new ones
 db = load({ order = { "bags", "ghost", "map" }, enabled = { bags = true, map = false }, radius = 150 })
 local items = db.profiles[1].items
 check(db.radius == 150 and db.iconSize == 52 and not db.order and not db.enabled, "migrated, kept saved value, filled the rest")
 check(items[1].id == "bags" and items[1].on and items[2].id == "map" and not items[2].on and #items == 9, "order kept, ghost dropped, missing appended")
-check(items[3].on == true and items[#items].on == false, "new built-ins use their defaults")
 
--- 4. open -> point right -> release runs the 3rd active entry (spellbook)
+-- 4. a panel is never opened from Lua: pointing arms the secure input, releasing does not call anything
 db = load(nil)
+check(ns.Run(ns.CatalogByID.quests) == nil and #calls == 0, "Run never opens a panel")
 cursor[1], cursor[2] = 500, 400
 ns.Wheel.Open(1)
 local wheel
 for _, f in ipairs(frames) do if f.scripts.OnUpdate and f.scripts.OnHide then wheel = f end end
 check(wheel, "wheel frame found")
-cursor[1], cursor[2] = 600, 400 -- 100px to the right of the open position
+cursor[1], cursor[2] = 600, 400 -- right: slot 3 of 7 (spellbook)
 wheel.scripts.OnUpdate(wheel, 0.016)
-ns.Wheel.Release()
-check(calls[#calls] == "binding:TOGGLESPELLBOOK", "released on slot 3 -> spellbook binding, got " .. tostring(calls[#calls]))
+check(armed() == SpellbookMicroButton, "pointing at spellbook arms its micro button")
+cursor[1], cursor[2] = 500, 400 -- back to the deadzone: disarmed
+wheel.scripts.OnUpdate(wheel, 0.016)
+check(input:GetAttribute("type1") == nil, "deadzone disarms")
+ns.Wheel.Cancel()
+check(#calls == 0, "no Lua calls at all")
 
--- 5. release in the deadzone and Escape cancel do nothing
-local n = #calls
-cursor[1], cursor[2] = 500, 400
+-- 5. Escape (polled) and a later key-up do nothing
 ns.Wheel.Open(1)
-wheel.scripts.OnUpdate(wheel, 0.016); ns.Wheel.Release()
-ns.Wheel.Open(1); wheel:Hide(); ns.Wheel.Release() -- Escape hides the frame, the later key-up must be ignored
-check(#calls == n, "cancel paths run nothing")
+keyDown.ESCAPE = true
+wheel.scripts.OnUpdate(wheel, 0.016)
+keyDown.ESCAPE = nil
+check(not wheel:IsShown(), "Escape cancels the wheel")
+ns.Wheel.Release()
+check(#calls == 0 and #UISpecialFrames == 0, "nothing runs; UISpecialFrames untouched")
 
--- 5b. left click confirms the pointed option
-n = #calls
+-- 5b. a left click on a panel does not open it from Lua (the key release does it securely)
 cursor[1], cursor[2] = 500, 400
 ns.Wheel.Open(1); cursor[1], cursor[2] = 600, 400
 wheel.scripts.OnUpdate(wheel, 0.016)
 mouseDown.LeftButton = true
 wheel.scripts.OnUpdate(wheel, 0.016)
 mouseDown.LeftButton = nil
-check(#calls == n + 1 and calls[#calls] == "binding:TOGGLESPELLBOOK", "left click runs the pointed option")
-
--- 5c. key-up failsafe: key seen held, then gone -> releases without the "up" event
-n = #calls
-cursor[1], cursor[2] = 500, 400
-ns.Wheel.Open(1); cursor[1], cursor[2] = 600, 400
-keyDown.Q = true
-wheel.scripts.OnUpdate(wheel, 0.016)
-keyDown.Q = nil
-wheel.scripts.OnUpdate(wheel, 0.016)
-check(#calls == n + 1 and not wheel:IsShown(), "released by polling the key")
-ns.Wheel.Open(1); wheel.scripts.OnUpdate(wheel, 0.016) -- never seen held (IsKeyDown unreliable) -> stays open
-check(wheel:IsShown(), "unarmed failsafe keeps the wheel open")
+check(#calls == 0 and wheel:IsShown() and armed() == SpellbookMicroButton, "left click on a panel keeps the wheel armed")
 ns.Wheel.Cancel()
 
 -- 6. profiles: copy, independent edits, missing wheel, delete
 ns.NewProfile(2, db.profiles[1])
 check(db.profiles[2].name == "Rueda 2" and #db.profiles[2].items == 9, "profile 2 is a copy")
 db.profiles[2].items[1].on = false
-check(#ns.GetActive(2) == 7 and #ns.GetActive(1) == 8, "profiles are independent")
+check(#ns.GetActive(2) == 6 and #ns.GetActive(1) == 7, "profiles are independent")
 ns.Wheel.Open(3)
 check(printed[#printed]:find("rueda 3 no existe"), "opening a missing wheel says so")
 db.selected = 2
@@ -182,103 +195,104 @@ check(db.profiles[1], "wheel 1 cannot be deleted")
 ns.DeleteProfile(2)
 check(db.profiles[2] == nil and db.selected == 1, "wheel 2 deleted, selection back to 1")
 
--- 6b. switching wheels while open: mouse wheel / arrows
+-- 6b. switching wheels while open (arrows / mouse wheel) re-arms for the new wheel
 ns.NewProfile(2, db.profiles[1])
-db.profiles[2].items[1].on = false -- wheel 2: talents, spellbook, quests... (7 options)
+db.profiles[2].items[1].on = false -- wheel 2: talents, spellbook, quests... (6 options)
 cursor[1], cursor[2] = 500, 400
 ns.Wheel.Open(1)
 ns.Wheel.Switch(1)
-cursor[1], cursor[2] = 600, 400
+cursor[1], cursor[2] = 600, 330 -- down-right: slot 3 of 6 (quests)
 wheel.scripts.OnUpdate(wheel, 0.016)
-ns.Wheel.Release()
-check(calls[#calls] == "binding:TOGGLEQUESTLOG", "after switching to wheel 2, slot 3 is quests, got " .. tostring(calls[#calls]))
--- clicking the right arrow (outside the ring) switches too, and does not run anything
-n = #calls
+check(armed() == QuestLogMicroButton, "after switching to wheel 2, down-right is quests")
+ns.Wheel.Cancel()
+check(input:GetAttribute("type1") == nil, "cancel disarms")
 cursor[1], cursor[2] = 500, 400
 ns.Wheel.Open(1)
-cursor[1], cursor[2] = 500 + 174, 400
+cursor[1], cursor[2] = 500 + 174, 400 -- the right arrow, outside the ring
 wheel.scripts.OnUpdate(wheel, 0.016)
 mouseDown.LeftButton = true
 wheel.scripts.OnUpdate(wheel, 0.016)
 mouseDown.LeftButton = nil
-check(#calls == n and wheel:IsShown(), "arrow click switches without running or closing")
-cursor[1], cursor[2] = 600, 400
-wheel.scripts.OnUpdate(wheel, 0.016)
-ns.Wheel.Release()
-check(calls[#calls] == "binding:TOGGLEQUESTLOG", "arrow click moved to wheel 2")
--- with a single wheel there is nothing to switch to
-ns.DeleteProfile(2)
-ns.Wheel.Open(1); ns.Wheel.Switch(1)
-cursor[1], cursor[2] = 500, 400
-wheel.scripts.OnUpdate(wheel, 0.016)
+check(#calls == 0 and wheel:IsShown(), "arrow click switches without running or closing")
 ns.Wheel.Cancel()
+ns.DeleteProfile(2)
 
--- 6c. entries with no way to open them in this client are hidden from the wheel
-BINDING_NAME_TOGGLESOCIAL = nil
-check(not ns.Available(ns.CatalogByID.friends) and ns.Available(ns.CatalogByID.map), "availability follows the routes")
-check(#ns.GetActive(1) == 7, "friends hidden while it has no route, got " .. #ns.GetActive(1))
-BINDING_NAME_TOGGLESOCIAL = "TOGGLESOCIAL"
-check(#ns.GetActive(1) == 8, "friends back once it has a route")
-
--- 7. custom entries: shared pool, on only in the chosen wheel, run through chat / RunScript
-ns.NewProfile(2, db.profiles[1])
-local id = ns.AddCustom({ name = "Bailar", icon = "INV_Misc_Note_01", command = "/dance" }, 2)
-check(#db.profiles[1].items == 10 and not db.profiles[1].items[10].on and db.profiles[2].items[10].on, "custom listed everywhere, on only in wheel 2")
-check(ns.GetActive(2)[#ns.GetActive(2)].id == id and #ns.GetActive(1) == 8, "custom shows in wheel 2 only")
-ns.Run(db.custom[id])
-check(calls[#calls] == "chat:/dance", "emote goes through the chat edit box")
-local id2 = ns.AddCustom({ name = "Script", command = "/run Foo()" }, 1)
-ns.Run(db.custom[id2])
+-- 7. custom entries: addon commands, emotes and /run; Blizzard commands are refused
+local function custom(command) return ns.AddCustom({ name = command, command = command }, 1) end
+ns.Run(db.custom[custom("/dbm pull 10")])
+check(calls[#calls] == "dbm:pull 10", "addon command runs its handler")
+ns.Run(db.custom[custom("/run Foo()")])
 check(calls[#calls] == "script:Foo()", "/run goes through RunScript")
+ns.Run(db.custom[custom("/dance")])
+check(calls[#calls] == "emote:DANCE", "emote command uses DoEmote")
+local n = #calls
+ns.Run(db.custom[custom("/cast Fireball")])
+check(#calls == n and printed[#printed]:find("protegido"), "protected command refused")
+ns.Run(db.custom[custom("/macro")])
+check(#calls == n and printed[#printed]:find("comando de Blizzard"), "Blizzard command refused")
+ns.Run(db.custom[custom("/nope")])
+check(#calls == n and printed[#printed]:find("no se encuentra"), "unknown command reported")
 ns.Run({ name = "Vacia", custom = true, command = "  " })
 check(printed[#printed]:find("no tiene comando"), "empty command reported")
+local em = ns.AddCustom({ name = "Saludar", cat = "emote", emote = "WAVE", command = "" }, 1)
+ns.Run(db.custom[em])
+check(calls[#calls] == "emote:WAVE", "emote entry uses DoEmote")
+check(ns.CatOf(db.custom[em]) == "emote" and ns.CatOf(ns.CatalogByID.map) == "menu", "categories")
 check(ns.IconPath(nil):find("QuestionMark") and ns.IconPath("Spell_Nature_Heal") == "Interface\\Icons\\Spell_Nature_Heal"
 	and ns.IconPath("12345") == 12345 and ns.IconPath("Interface\\Icons\\X") == "Interface\\Icons\\X", "icon paths")
-ns.DeleteCustom(id)
-check(not db.custom[id] and #db.profiles[1].items == 10 and #db.profiles[2].items == 10, "custom removed from every wheel")
-
--- 7a. emotes use DoEmote; categories
-local em = ns.AddCustom({ name = "Bailar", cat = "emote", emote = "DANCE", command = "" }, 1)
-ns.Run(db.custom[em])
-check(calls[#calls] == "emote:DANCE", "emote entry uses DoEmote")
-check(ns.CatOf(db.custom[em]) == "emote" and ns.CatOf(db.custom[id2]) == "command" and ns.CatOf(ns.CatalogByID.map) == "menu", "categories")
+local before = #db.profiles[1].items
 ns.DeleteCustom(em)
+check(not db.custom[em] and #db.profiles[1].items == before - 1, "custom removed from every wheel")
 
--- 7b. slot cap
-for i = 1, 20 do ns.AddCustom({ name = "x" .. i, command = "/x" }, 1) end
+-- 7b. a custom entry runs from the wheel on release or click (it is not a panel)
+for _, it in ipairs(db.profiles[1].items) do it.on = false end
+local dbmId = custom("/dbm version")
+for _, it in ipairs(db.profiles[1].items) do if it.id == dbmId then it.on = true end end
+cursor[1], cursor[2] = 500, 400
+ns.Wheel.Open(1); cursor[1], cursor[2] = 500, 500
+wheel.scripts.OnUpdate(wheel, 0.016)
+check(input:GetAttribute("type1") == nil, "custom entries never arm the secure input")
+ns.Wheel.Release()
+check(calls[#calls] == "dbm:version", "custom entry runs on release")
+
+-- 7c. slot cap
+for i = 1, 20 do custom("/dbm x" .. i) end
 for _, it in ipairs(db.profiles[1].items) do it.on = true end
 check(#ns.GetActive(1) == ns.MAX_SLOTS, "a wheel never exceeds MAX_SLOTS")
 
 -- 8. reset: appearance + selected wheel's options back to defaults; wheels and customs stay
-db.radius = 999; db.profiles[1].items[1].on = false; db.keyInit = true
-db.selected = 1
+db.radius = 999; db.keyInit = true
 ns.ResetDB()
 check(db.radius == 110 and db.profiles[1].items[1].on and db.keyInit, "reset restores defaults, keeps keyInit")
-check(db.profiles[2] and db.custom[id2] and #db.profiles[1].items == 9 + 21, "reset keeps wheels and custom entries")
+check(db.custom[dbmId], "reset keeps custom entries")
 
--- 9. a failing action is reported, not thrown; no route says so; fallbacks
-Boom = function() error("boom") end
-ns.Run({ name = "X", bind = {}, fn = { { "Boom" } } })
-check(printed[#printed]:find("No se pudo abrir X"), "action error printed")
-check(#ns.CatalogByID.character.fn == 0 and #ns.CatalogByID.character.bind == 0,
-	"character panel has no insecure ToggleCharacter fallback")
-ns.Run({ name = "Y", bind = {}, fn = { { "Nope" } } })
-check(printed[#printed]:find("no est"), "unavailable reported")
-BINDING_NAME_TOGGLEQUESTLOG = nil
-ToggleQuestLog = function() calls[#calls + 1] = "fn:ToggleQuestLog" end
-ns.Run(ns.CatalogByID.quests)
-check(calls[#calls] == "fn:ToggleQuestLog", "fallback to function when the binding is missing")
-PlayerSpellsUtil = { ToggleClassTalentOrSpecFrame = function() calls[#calls + 1] = "fn:talents" end }
-BINDING_NAME_TOGGLETALENTS = nil
-ns.Run(ns.CatalogByID.talents)
-check(calls[#calls] == "fn:talents", "dotted function path resolved")
-ns.Check()
+-- 9. combat: nothing protected is touched; panels say so instead of opening; config refuses to open
+InCombatLockdown = function() return true end
+ns.SetSecureAction(1, ns.CatalogByID.character)
+check(input:GetAttribute("type1") == nil, "no secure attribute changes in combat")
+cursor[1], cursor[2] = 500, 400
+ns.Wheel.Open(1); cursor[1], cursor[2] = 600, 330
+wheel.scripts.OnUpdate(wheel, 0.016)
+n = #calls
+ns.Wheel.Release()
+check(#calls == n and printed[#printed]:find("en combate"), "in combat a panel says so, no Lua")
+ns.Config.Toggle()
+check(printed[#printed]:find("no se puede abrir en combate") and not RadialHubConfig, "config refuses to open in combat")
+check(not ns.BindKey("ALT-Z", 1), "no key changes in combat")
+InCombatLockdown = function() return false end
+-- leaving combat clears anything left armed
+ns.SetSecureAction(1, ns.CatalogByID.character)
+eventFrame().scripts.OnEvent(eventFrame(), "PLAYER_REGEN_ENABLED")
+check(input:GetAttribute("type1") == nil, "armed click cleared after combat")
 
--- 10. the config window builds and refreshes against the mock without errors
+-- 10. the config window builds, refreshes, and closes itself when combat starts
 ns.Config.Toggle()
 check(RadialHubConfig, "config frame created")
 for _, m in ipairs(printed) do check(not m:find("error al crear"), "config build error: " .. m) end
 RadialHubConfig.scripts.OnShow(RadialHubConfig)
+RadialHubConfig.scripts.OnEvent(RadialHubConfig, "PLAYER_REGEN_DISABLED")
+check(not RadialHubConfig:IsShown(), "config closes when combat starts")
+ns.Check()
 
 -- 11. key polling: opens on the bound key, releases on let go, and allocates nothing per frame when idle
 local altDown = false
@@ -289,28 +303,61 @@ ns.RefreshWatchedKeys() -- every wheel is bound to ALT-Q in this mock
 local monitor
 for _, f in ipairs(frames) do if f.scripts.OnUpdate and f ~= wheel then monitor = f end end
 check(monitor, "key monitor frame found")
+ns.ResetDB()
 cursor[1], cursor[2] = 500, 400
 altDown, keyDown.Q = true, true
 monitor.scripts.OnUpdate(monitor, 0.016)
 check(wheel:IsShown(), "holding ALT-Q opens the wheel")
+cursor[1], cursor[2] = 550, 300 -- slot 4 of 7: quests
+wheel.scripts.OnUpdate(wheel, 0.016)
+check(armed() == QuestLogMicroButton, "quests armed")
+n = #calls
 altDown, keyDown.Q = false, nil
-monitor.scripts.OnUpdate(monitor, 0.016)
-check(not wheel:IsShown(), "letting go closes it")
+monitor.scripts.OnUpdate(monitor, 0.016) -- the CLICK binding did the secure click on key-up
+check(not wheel:IsShown() and input:GetAttribute("type1") == nil and #calls == n, "letting go: closed, disarmed, no Lua")
 collectgarbage("collect"); collectgarbage("stop")
-local before = collectgarbage("count")
+local kb = collectgarbage("count")
 for _ = 1, 10000 do monitor.scripts.OnUpdate(monitor, 0.016) end
-local grown = collectgarbage("count") - before
+local grown = collectgarbage("count") - kb
 collectgarbage("restart")
 check(grown < 1, "idle polling allocates nothing (grew " .. grown .. " KB over 10000 frames)")
 
--- 12. no taint vectors: nothing added to UISpecialFrames; Escape still cancels the open wheel
-check(#UISpecialFrames == 0, "RadialHub must not add frames to UISpecialFrames (taints the game menu / Edit Mode)")
-cursor[1], cursor[2] = 500, 400
-ns.Wheel.Open(1)
-check(wheel:IsShown(), "wheel open")
-keyDown.ESCAPE = true
-wheel.scripts.OnUpdate(wheel, 0.016)
-keyDown.ESCAPE = nil
-check(not wheel:IsShown(), "Escape cancels the wheel")
+-- 12. every user-facing literal has an English translation; switching language changes texts live
+local NOT_TRANSLATED = { ["RadialHub"] = true, ["X"] = true, ["+ Emote"] = true, ["Emotes"] = true, ["Español"] = true,
+	["English"] = true, ["<"] = true, [">"] = true, [""] = true, ["KEY_"] = true }
+local keys = {}
+for _, file in ipairs({ "Core.lua", "Wheel.lua", "Config.lua" }) do
+	local src = io.open(file):read("a")
+	for _, pat in ipairs({ '[^%w_]L%("(.-)"', 'Text%([^\n]-, "(.-)"%)', 'Flat%([^\n]-, "(.-)"%)', 'Section%(%w+, "(.-)"',
+		'Field%("(.-)"', 'Slider%("%w+",%s*"(.-)"' }) do
+		for k in src:gmatch(pat) do keys[k] = file end
+	end
+end
+for _, entry in ipairs(ns.Catalog) do keys[entry.name] = "catalog" end
+for _, c in ipairs(ns.Categories) do keys[c.name] = "categories" end
+for _, e in ipairs(ns.Emotes) do keys[e[1]] = "emotes" end
+local count = 0
+for k, where in pairs(keys) do
+	k = k:gsub("\\n", "\n"):gsub("\\\\", "\\") -- source escapes -> real text
+	if not NOT_TRANSLATED[k] and not k:find("^%%") and not k:find('"') then -- '"': an expression, not a literal
+		check(ns.EN[k], "missing English for '" .. k .. "' (" .. where .. ")")
+		count = count + 1
+	end
+end
+check(count > 60, "translation scan found too few strings: " .. count)
+ns.SetLanguage("en")
+check(ns.L("Personaje") == "Character" and ns.L("la rueda %d no existe. Créala en /rh.", 3) == "wheel 3 doesn't exist. Create it in /rh.", "English texts")
+check(_G["BINDING_NAME_" .. ns.BINDINGS[1]] == "Open wheel 1 (hold)", "binding names follow the language")
+ns.Wheel.Open(9)
+check(printed[#printed]:find("wheel 9 doesn't exist"), "prints use the language")
+ns.SetLanguage("es")
+check(ns.L("Personaje") == "Personaje", "back to Spanish")
+
+-- 13. the map opens through the zone text button of the minimap (a child key, not a global)
+MinimapCluster = { ZoneTextButton = newFrame() }
+check(ns.Available(ns.CatalogByID.map) and select(2, ns.SecureButton(ns.CatalogByID.map)) == "MinimapCluster.ZoneTextButton", "map via MinimapCluster.ZoneTextButton")
+ns.SetSecureAction(1, ns.CatalogByID.map)
+check(armed() == MinimapCluster.ZoneTextButton, "map arms the zone text button")
+ns.SetSecureAction(1, nil)
 
 print("ok")

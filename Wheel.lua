@@ -1,6 +1,7 @@
 -- RadialHub · Wheel: geometría polar, modal en el cursor, animación (lerp en OnUpdate) y ejecución al soltar.
 -- Círculos nítidos con máscara redonda (ns.Circle): iconos, aros y fondos son discos (WHITE8X8 teñido o icono).
 local addonName, ns = ...
+local L = ns.L
 local Wheel = {}
 ns.Wheel = Wheel
 
@@ -36,7 +37,7 @@ local ar, ag, ab = 1, 1, 1         -- color de acento
 local openT, ia, indA = 0, 0, 0    -- progreso de apertura, ángulo e intensidad del indicador
 local armed, wasClick = false, false -- failsafe de tecla soltada / clic izquierdo previo
 local heldKeys = {}                -- teclas físicas del atajo (sin modificadores) para saber si sigue pulsado
-local secureCharacterSelected = false
+local armedEntry = nil             -- entrada que el botón seguro abrirá al soltar la tecla
 local slotCos, slotSin = {}, {}    -- dirección de cada hueco (se calcula en Layout, no en cada fotograma)
 local dirty = true                 -- hay algo que animar o redibujar; si no, OnUpdate solo mira el cursor
 
@@ -93,12 +94,16 @@ local function OnUpdate(_, dt)
 		if hoverArrow then
 			wasClick = true
 			Wheel.Switch(hoverArrow.dir)
+			return
+		elseif selected and not list[selected].custom then
+			-- los paneles se abren con el clic seguro al soltar la tecla; un clic de ratón aquí no puede hacerlo
 		elseif selected then
 			Wheel.Release()
+			return
 		else
 			Wheel.Cancel()
+			return
 		end
-		return
 	end
 	wasClick = click
 
@@ -107,20 +112,20 @@ local function OnUpdate(_, dt)
 
 	-- Selección
 	local idx = not hoverArrow and Wheel.SliceAt(dx, dy, n, dead) or nil
-	local secureCharacter = idx and list[idx].id == "character" or false
-	if secureCharacter ~= secureCharacterSelected then
-		secureCharacterSelected = secureCharacter
-		ns.SetSecureCharacterAction(inputProfile, secureCharacter)
+	local want = idx and not list[idx].custom and list[idx] or nil
+	if want ~= armedEntry then
+		armedEntry = want
+		ns.SetSecureAction(inputProfile, want)
 	end
 	if idx ~= selected then
 		selected = idx
 		dirty = true
 		if idx then
 			if db.sound then PlaySound(SOUND_TICK) end
-			label:SetText(list[idx].name)
+			label:SetText(L(list[idx].name))
 			label:SetTextColor(1, 1, 1)
 		else
-			label:SetText("Cancelar")
+			label:SetText(L("Cancelar"))
 			label:SetTextColor(0.5, 0.5, 0.55)
 		end
 	end
@@ -274,7 +279,7 @@ local function Layout(profile)
 	coreRing:SetVertexColor(ar, ag, ab, 0.55)
 	SizeDisc(coreDisc, 2 * dead)
 	label:SetWidth(max(2 * dead - 8, 60))
-	label:SetText("Cancelar")
+	label:SetText(L("Cancelar"))
 	label:SetTextColor(0.5, 0.5, 0.55)
 
 	for i = 1, #list do
@@ -318,7 +323,7 @@ local function Layout(profile)
 		local name = ns.db.profiles[profile].name
 		title:ClearAllPoints()
 		title:SetPoint("CENTER", frame, "CENTER", 0, bgR + 12)
-		title:SetText(name ~= "" and name or ("Rueda " .. profile))
+		title:SetText(name ~= "" and name or L("Rueda %d", profile))
 		title:SetTextColor(ar, ag, ab)
 		title:Show()
 	else
@@ -333,11 +338,11 @@ function Wheel.Open(profile)
 	profile = profile or 1
 	db = ns.db
 	local entries = ns.GetActive(profile)
-	if not entries then ns.Print("la rueda " .. profile .. " no existe. Créala en /rh."); return end
-	if #entries == 0 then ns.Print("la rueda " .. profile .. " no tiene opciones activas. Usa /rh para activarlas."); return end
+	if not entries then ns.Print(L("la rueda %d no existe. Créala en /rh.", profile)); return end
+	if #entries == 0 then ns.Print(L("la rueda %d no tiene opciones activas. Usa /rh para activarlas.", profile)); return end
 	inputProfile = profile
-	secureCharacterSelected = false
-	ns.SetSecureCharacterAction(inputProfile, false)
+	armedEntry = nil
+	ns.SetSecureAction(inputProfile, nil)
 	Build()
 	Layout(profile)
 
@@ -364,8 +369,8 @@ function Wheel.Switch(dir)
 		local j = (profileIdx - 1 + dir * step) % ns.MAX_PROFILES + 1
 		local entries = ns.GetActive(j)
 		if entries and #entries > 0 then
-			secureCharacterSelected = false
-			ns.SetSecureCharacterAction(inputProfile, false)
+			armedEntry = nil
+			ns.SetSecureAction(inputProfile, nil)
 			Layout(j)
 			openT = db.anim and 0.4 or 1 -- pequeño "florecimiento" al cambiar
 			if db.sound then PlaySound(SOUND_TICK) end
@@ -378,18 +383,23 @@ end
 function Wheel.Release()
 	if not active then return end
 	local entry = selected and list[selected]
-	if ns.debug then ns.Print("soltar: " .. (entry and entry.name or "nada seleccionado")) end
+	if ns.debug then ns.Print(L("soltar: %s", entry and L(entry.name) or L("nada seleccionado"))) end
 	frame:Hide()
 	if entry then
 		if db.sound then PlaySound(SOUND_PICK) end
-		if entry.id == "character" then return end -- solo se abre por el clic seguro; nunca llamar ToggleCharacter desde Lua
-		-- un instante después: algunos paneles (bolsas con Bagnon) no se abren si se llama justo al soltar la tecla
-		if C_Timer and C_Timer.After then C_Timer.After(0.05, function() ns.Run(entry) end) else ns.Run(entry) end
+		if not entry.custom then -- los paneles solo se abren por el clic seguro; nunca desde Lua (contamina la interfaz)
+			if ns.ArmedAction(inputProfile) ~= entry then
+				ns.Print(InCombatLockdown() and L("%s: en combate no se puede abrir desde la rueda.", L(entry.name))
+					or L("%s: suelta la tecla de la rueda para abrirlo.", L(entry.name)))
+			end
+			return
+		end
+		ns.Run(entry) -- entrada propia: emote, comando de addon o /run
 	end
 end
 
 function Wheel.Cancel()
-	secureCharacterSelected = false
-	ns.SetSecureCharacterAction(inputProfile, false)
+	armedEntry = nil
+	ns.SetSecureAction(inputProfile, nil)
 	if active then frame:Hide() end
 end

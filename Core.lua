@@ -1,44 +1,69 @@
 -- RadialHub · Core: base de datos, catálogo de acciones, atajo y comandos.
--- Probado en WoW Forever (Interface 16001); Retail y Classic son experimentales (las opciones sin ruta se ocultan). Todo vive en el namespace privado `ns`; los únicos
--- globales son los que el cliente exige: RadialHubDB (SavedVariables), RadialHub_OnKey (Bindings.xml),
--- los textos de BINDING_*, SLASH_*, y los marcos con nombre RadialHubFrame / RadialHubConfig (para Escape).
+-- Probado en WoW Forever (Interface 16001); Retail y Classic son experimentales. Todo vive en el namespace privado `ns`.
+--
+-- Reglas anti-contaminación (taint). Romper cualquiera de ellas ha causado errores en combate en versiones anteriores,
+-- y tests/test.lua comprueba las que se pueden comprobar leyendo el código:
+--   * Los paneles de Blizzard solo se abren con un clic seguro sobre su botón (micro menú, mochila...). Nunca desde Lua.
+--   * Nada de UISpecialFrames, HideUIPanel/ShowUIPanel, RunBinding, ChatEdit_*, hooksecurefunc, RegisterStateDriver.
+--   * Los comandos propios solo ejecutan comandos de otros addons, emotes y /run; los de Blizzard se rechazan.
+--   * Nada que toque atributos seguros, atajos o teclado se hace en combate.
 local addonName, ns = ...
+local L = ns.L
 
 -- Hasta 4 ruedas (perfiles), cada una con su propio atajo (Bindings.xml).
 ns.MAX_PROFILES = 4
 ns.MAX_SLOTS = 16 -- opciones máximas activas por rueda
 ns.BINDINGS, ns.LEGACY_BINDINGS = {}, {}
 local secureInputs = {}
-local secureCharacterSelected = {}
+local armedEntry = {} -- entrada armada de verdad en el botón seguro de cada rueda (solo se cambia fuera de combate)
 
 BINDING_HEADER_RADIALHUB = "RadialHub"
 for i = 1, ns.MAX_PROFILES do
 	local name = "RadialHubSecureInput" .. i
 	ns.BINDINGS[i] = "CLICK " .. name .. ":LeftButton"
 	ns.LEGACY_BINDINGS[i] = { "RADIALHUB_TOGGLE" .. (i == 1 and "" or i), "QUICKWHEEL_TOGGLE" .. (i == 1 and "" or i) }
-	_G["BINDING_NAME_" .. ns.BINDINGS[i]] = "Abrir rueda " .. i .. " (mantener pulsada)"
-	local profile = i
-	local input = CreateFrame("Button", name, UIParent, "SecureActionButtonTemplate")
-	input:SetSize(1, 1); input:SetPoint("BOTTOMLEFT", UIParent, "BOTTOMLEFT", -20, -20)
-	input:SetAlpha(0); input:EnableMouse(true); input:RegisterForClicks("AnyDown", "AnyUp")
-	input:SetAttribute("useOnKeyDown", false)
-	-- This button is only bound through CLICK ...:LeftButton, so use the exact
-	-- click attributes instead of wildcard attributes.
-	-- No RegisterStateDriver / SecureHandlerStateTemplate aquí: ese registro contamina SecureStateDriverManager,
-	-- que es quien pagina la barra de acción (formas, etc.), y rompía las barras tras un rato de sesión.
-	input:SetAttribute("type1", nil)
-	secureInputs[i] = input
+	_G["BINDING_NAME_" .. ns.BINDINGS[i]] = L("Abrir rueda %d (mantener pulsada)", i)
+	-- Solo se usa con CLICK ...:LeftButton, así que van atributos exactos ("type1"), no comodines.
+	-- Sin RegisterStateDriver / SecureHandlerStateTemplate: contaminan SecureStateDriverManager, que pagina las barras.
+	secureInputs[i] = CreateFrame("Button", name, UIParent, "SecureActionButtonTemplate")
 end
 
-function ns.SetSecureCharacterAction(i, enabled)
+-- Configuración protegida de los botones seguros: si el addon se carga en combate, se aplaza a la salida.
+local inputsReady = false
+local function SetupInputs()
+	if inputsReady or InCombatLockdown() then return end
+	for _, input in ipairs(secureInputs) do
+		input:SetSize(1, 1); input:SetPoint("BOTTOMLEFT", UIParent, "BOTTOMLEFT", -20, -20)
+		input:SetAlpha(0); input:EnableMouse(true); input:RegisterForClicks("AnyDown", "AnyUp")
+		input:SetAttribute("useOnKeyDown", false)
+	end
+	inputsReady = true
+end
+SetupInputs()
+
+-- Botón de Blizzard (micro menú, mochila...) que abre la entrada con un clic seguro; nil si este cliente no lo tiene.
+-- Abrir paneles desde Lua de un addon contamina la interfaz (barras, Modo edición...); el clic seguro no.
+function ns.SecureButton(entry)
+	if not entry.secure then return nil end
+	for _, name in ipairs(entry.secure) do
+		local b = _G
+		for part in name:gmatch("[^.]+") do b = type(b) == "table" and b[part] or nil end -- admite "Marco.Hijo"
+		if type(b) == "table" and b.Click then return b, name end
+	end
+end
+
+-- Arma (o desarma con nil) la entrada que el botón seguro de la rueda i pulsará al soltar la tecla.
+-- En combate los atributos seguros no se pueden cambiar: se queda como estaba (se limpia al salir de combate).
+function ns.SetSecureAction(i, entry)
+	if InCombatLockdown() or not inputsReady then return end
+	local button = entry and ns.SecureButton(entry)
 	local input = secureInputs[i]
-	secureCharacterSelected[i] = enabled and CharacterMicroButton ~= nil or false
-	if InCombatLockdown() then return end
-	input:SetAttribute("type1", secureCharacterSelected[i] and "click" or nil)
-	input:SetAttribute("clickbutton1", secureCharacterSelected[i] and CharacterMicroButton or nil)
+	input:SetAttribute("type1", button and "click" or nil)
+	input:SetAttribute("clickbutton1", button or nil)
+	armedEntry[i] = button and entry or nil
 end
 
-function ns.HasSecureCharacterAction(i) return secureCharacterSelected[i] end
+function ns.ArmedAction(i) return armedEntry[i] end
 
 local DEFAULT_KEY = "ALT-Q" -- solo se asigna una vez, a la rueda 1, y si está libre
 
@@ -70,47 +95,35 @@ function ns.Circle(tex, path)
 end
 
 ----------------------------------------------------------------------------------------------------
--- Catálogo de acciones. Para añadir un panel basta con una entrada más.
--- Cada acción prueba, por orden, funciones del propio juego y, si no, su atajo nativo (RunBinding):
---   fn   = { "Funcion" o "Tabla.Funcion", arg1, arg2... }; vale la primera que existe y no da error.
---   bind = nombres de binding; se comprueba que existan con BINDING_NAME_<bind>.
--- /rh check muestra qué ruta usa cada entrada en tu cliente.
+-- Catálogo de paneles. Cada uno se abre con un clic seguro sobre el primer botón de Blizzard de `secure` que
+-- exista en este cliente; si no hay ninguno, el panel no aparece. Para añadir uno basta con una entrada más.
+-- /rh check muestra qué botón usa cada panel y qué botones del micro menú tiene tu cliente.
 ----------------------------------------------------------------------------------------------------
 local ICON = "Interface\\Icons\\"
 
 ns.Catalog = {
 	{ id = "character",    name = "Personaje",             icon = ICON .. "INV_Shirt_White_01",        default = true,
-		secureClick = "CharacterMicroButton", bind = {}, fn = {} },
+		secure = { "CharacterMicroButton" } },
 	{ id = "talents",      name = "Talentos",              icon = ICON .. "Spell_Holy_ArcaneIntellect", default = true,
-		bind = { "TOGGLETALENTS" },
-		fn = { { "PlayerSpellsUtil.ToggleClassTalentOrSpecFrame" }, { "ToggleTalentFrame" } } },
+		secure = { "TalentMicroButton", "PlayerSpellsMicroButton" } },
 	{ id = "spellbook",    name = "Libro de hechizos",     icon = ICON .. "INV_Misc_Book_09",          default = true,
-		bind = { "TOGGLESPELLBOOK" },
-		fn = { { "PlayerSpellsUtil.ToggleSpellBookFrame" }, { "ToggleSpellBook", "spell" } } },
+		secure = { "SpellbookMicroButton" } },
 	{ id = "quests",       name = "Misiones",              icon = ICON .. "INV_Misc_Note_01",          default = true,
-		bind = { "TOGGLEQUESTLOG" },
-		fn = { { "ToggleQuestLog" } } },
+		secure = { "QuestLogMicroButton" } },
 	{ id = "map",          name = "Mapa del mundo",        icon = ICON .. "INV_Misc_Map_01",           default = true,
-		bind = { "TOGGLEWORLDMAP" },
-		fn = { { "ToggleWorldMap" } } },
+		secure = { "WorldMapMicroButton", "MiniMapWorldMapButton", "MinimapCluster.ZoneTextButton" } },
 	{ id = "guild",        name = "Hermandad",             icon = ICON .. "INV_Shirt_GuildTabard_01",  default = true,
-		bind = { "TOGGLEGUILDTAB" },
-		fn = { { "ToggleGuildFrame" }, { "ToggleFriendsFrame", 3 } } },
+		secure = { "GuildMicroButton" } },
 	{ id = "friends",      name = "Amigos",                icon = ICON .. "INV_Misc_GroupLooking",     default = true,
-		bind = { "TOGGLESOCIAL", "TOGGLEFRIENDSTAB" },
-		fn = { { "ToggleFriendsFrame", 1 } } },
+		secure = { "SocialsMicroButton", "QuickJoinToastButton" } },
 	{ id = "bags",         name = "Bolsas",                icon = ICON .. "INV_Misc_Bag_08",           default = true,
-		bind = { "OPENALLBAGS" },
-		fn = { { "ToggleAllBags" } } },
+		secure = { "MainMenuBarBackpackButton" } },
 	{ id = "achievements", name = "Logros",                icon = ICON .. "Achievement_General",       default = true, noForever = true,
-		bind = { "TOGGLEACHIEVEMENT" },
-		fn = { { "ToggleAchievementFrame" } } },
+		secure = { "AchievementMicroButton" } },
 	{ id = "lfd",          name = "Buscador de mazmorras", icon = ICON .. "INV_Misc_GroupLooking",     default = false, noForever = true,
-		bind = { "TOGGLEGROUPFINDER", "TOGGLELFGPARENT" },
-		fn = { { "PVEFrame_ToggleFrame" }, { "ToggleLFDParentFrame" } } },
+		secure = { "LFDMicroButton", "LFGMicroButton" } },
 	{ id = "pets",         name = "Mascotas y monturas",   icon = ICON .. "Ability_Mount_RidingHorse", default = false,
-		bind = { "TOGGLEMOUNTJOURNAL", "TOGGLECOLLECTIONS", "TOGGLEPETBOOK" },
-		fn = { { "ToggleCollectionsJournal" }, { "ToggleCharacter", "PetPaperDollFrame" } } },
+		secure = { "CollectionsMicroButton" } },
 }
 
 -- WoW Forever no tiene todos los paneles: las entradas marcadas noForever no existen allí y se ocultan.
@@ -157,79 +170,88 @@ function ns.IconPath(icon)
 	return ICON .. icon
 end
 
--- Entrada propia: emotes, /run <código Lua> y comandos de otros addons. Blizzard bloquea /cast y /use a los addons.
+-- Comando escrito en una entrada propia -> función a ejecutar, o nil y el motivo.
+-- Sin pasar por la caja del chat (ChatEdit_SendText la contamina). Solo comandos de addons, emotes y /run:
+-- los de Blizzard (secure o no) tocarían su interfaz desde código de addon.
+local function EmoteToken(cmd)
+	if hash_EmoteTokenList and hash_EmoteTokenList[cmd] then return hash_EmoteTokenList[cmd] end
+	for i = 1, MAXEMOTEINDEX or 600 do
+		local token = _G["EMOTE" .. i .. "_TOKEN"]
+		if token then
+			for j = 1, 10 do
+				local c = _G["EMOTE" .. i .. "_CMD" .. j]
+				if not c then break end
+				if strupper(c) == cmd then return token end
+			end
+		end
+	end
+end
+
+local function ResolveCommand(text)
+	local cmd, rest = text:match("^(/%S+)%s*(.-)%s*$")
+	if not cmd then return nil, L("debe empezar por /") end
+	cmd = strupper(cmd)
+	if cmd == "/RUN" or cmd == "/SCRIPT" then
+		return function() RunScript(rest) end
+	end
+	if hash_SecureCmdList and hash_SecureCmdList[cmd] then
+		return nil, L("%s es un comando protegido de Blizzard; los addons no pueden usarlo", cmd:lower())
+	end
+	for key, fn in pairs(SlashCmdList) do
+		local i = 1
+		while _G["SLASH_" .. key .. i] do
+			if strupper(_G["SLASH_" .. key .. i]) == cmd then
+				if issecurevariable and issecurevariable(SlashCmdList, key) then
+					return nil, L("%s es un comando de Blizzard; lanzarlo desde un addon contamina su interfaz", cmd:lower())
+				end
+				return function() fn(rest, DEFAULT_CHAT_FRAME.editBox) end
+			end
+			i = i + 1
+		end
+	end
+	local token = EmoteToken(cmd)
+	if token then return function() DoEmote(token) end end
+	return nil, L("no se encuentra el comando %s", cmd:lower())
+end
+ns.ResolveCommand = ResolveCommand
+
 local function RunCommand(entry)
+	local run, why
 	if entry.emote then
-		local ok, err = pcall(DoEmote, entry.emote)
-		if not ok then ns.Print("Error en " .. entry.name .. ": " .. tostring(err)) end
-		return
-	end
-	local text = strtrim(entry.command or "")
-	if text == "" then ns.Print(entry.name .. ": no tiene comando (edítala en /rh)."); return end
-	local cmd, code = text:match("^/(%a+)%s+(.*)$")
-	local ok, err
-	if cmd and (strlower(cmd) == "run" or strlower(cmd) == "script") then
-		ok, err = pcall(RunScript, code)
+		run = function() DoEmote(entry.emote) end
 	else
-		local box = DEFAULT_CHAT_FRAME.editBox
-		box:SetText(text)
-		ok, err = pcall(ChatEdit_SendText, box, 0)
-		box:SetText("")
+		local text = strtrim(entry.command or "")
+		if text == "" then ns.Print(L("%s: no tiene comando (edítala en /rh).", entry.name)); return end
+		run, why = ResolveCommand(text)
 	end
-	if not ok then ns.Print("Error en " .. entry.name .. ": " .. tostring(err)) end
+	if not run then ns.Print(entry.name .. ": " .. why .. "."); return end
+	local ok, err = pcall(run)
+	if not ok then ns.Print(L("Error en %s: %s", entry.name, tostring(err))) end
 end
 
--- El helper seguro evita propagar taint al abrir paneles; RunBinding no ejecuta acciones protegidas desde el addon.
-local function Routes(entry)
-	local routes = {}
-	for _, spec in ipairs(entry.fn) do
-		local f = _G
-		for part in spec[1]:gmatch("[^.]+") do f = type(f) == "table" and f[part] or nil end
-		if type(f) == "function" then
-			routes[#routes + 1] = { label = "fn " .. spec[1], run = function()
-				local call = securecallfunction or securecall
-				if call then call(f, unpack(spec, 2)) else f(unpack(spec, 2)) end
-			end }
-		end
-	end
-	for _, b in ipairs(entry.bind) do
-		if _G["BINDING_NAME_" .. b] then
-			routes[#routes + 1] = { label = "binding " .. b, run = function() RunBinding(b) end }
-		end
-	end
-	return routes
-end
-
--- ¿Se puede abrir en este cliente? Las entradas propias siempre; las integradas, si tienen alguna ruta.
--- Se evalúa al usarlas (no al cargar) porque algunas funciones de Blizzard se definen más tarde.
+-- ¿Se puede usar en este cliente? Las entradas propias siempre; los paneles, si tienen botón de Blizzard.
+-- Se evalúa al usarlas (no al cargar) porque algunos botones de Blizzard se crean más tarde.
 function ns.Available(entry)
-	return entry.custom or (entry.secureClick and _G[entry.secureClick] ~= nil) or #Routes(entry) > 0
+	return entry.custom or ns.SecureButton(entry) ~= nil
 end
 
--- Prueba cada ruta hasta que una no falle; /rh debug muestra cuál se usó.
+-- Solo las entradas propias se ejecutan desde Lua; los paneles los abre el clic seguro al soltar la tecla.
 function ns.Run(entry)
 	if entry.custom then return RunCommand(entry) end
-	local routes, err = Routes(entry)
-	for _, route in ipairs(routes) do
-		local ok, e = pcall(route.run)
-		if ok then
-			if ns.debug then ns.Print(entry.name .. " -> " .. route.label) end
-			return
-		end
-		err = e
-	end
-	if err then
-		ns.Print("No se pudo abrir " .. entry.name .. ": " .. tostring(err))
-	else
-		ns.Print(entry.name .. " no está disponible en este cliente (/rh check para ver el detalle).")
-	end
 end
 
 function ns.Check()
 	for _, entry in ipairs(ns.Catalog) do
-		local route = entry.secureClick and _G[entry.secureClick] and { label = "secure click " .. entry.secureClick } or Routes(entry)[1]
-		ns.Print(entry.name .. ": " .. (route and route.label or "|cffff4040NO DISPONIBLE|r"))
+		local _, button = ns.SecureButton(entry)
+		ns.Print(button and L("%s: clic seguro en %s", L(entry.name), button)
+			or L("%s: |cffff4040NO DISPONIBLE|r (no hay botón de Blizzard)", L(entry.name)))
 	end
+	local found = {}
+	for k, v in pairs(_G) do
+		if type(k) == "string" and k:find("MicroButton$") and type(v) == "table" and v.Click then found[#found + 1] = k end
+	end
+	table.sort(found)
+	ns.Print(L("Botones del micro menú en este cliente: %s", #found > 0 and table.concat(found, ", ") or L("ninguno")))
 end
 
 ----------------------------------------------------------------------------------------------------
@@ -276,10 +298,10 @@ local function Fill(db)
 	if not db.profiles then -- migración desde la versión de una sola rueda (order/enabled)
 		local items = {}
 		for _, id in ipairs(db.order or {}) do items[#items + 1] = { id = id, on = db.enabled and db.enabled[id] or false } end
-		db.profiles = { { name = "Rueda 1", items = items } }
+		db.profiles = { { name = L("Rueda %d", 1), items = items } }
 		db.order, db.enabled = nil, nil
 	end
-	db.profiles[1] = db.profiles[1] or { name = "Rueda 1", items = {} }
+	db.profiles[1] = db.profiles[1] or { name = L("Rueda %d", 1), items = {} }
 	for i = 1, ns.MAX_PROFILES do
 		if db.profiles[i] then Sync(db.profiles[i], db) end
 	end
@@ -298,7 +320,7 @@ end
 function ns.NewProfile(i, src)
 	local items = {}
 	for _, it in ipairs(src.items) do items[#items + 1] = { id = it.id, on = it.on } end
-	ns.db.profiles[i] = { name = "Rueda " .. i, items = items }
+	ns.db.profiles[i] = { name = L("Rueda %d", i), items = items }
 end
 
 function ns.DeleteProfile(i)
@@ -345,7 +367,7 @@ end
 -- Atajos de teclado (SetBinding + SaveBindings; el cliente los bloquea en combate). i = nº de rueda.
 ----------------------------------------------------------------------------------------------------
 function ns.BindKey(key, i)
-	if InCombatLockdown() then ns.Print("No se puede cambiar el atajo en combate."); return false end
+	if InCombatLockdown() then ns.Print(L("No se puede cambiar el atajo en combate.")); return false end
 	local binding = ns.BINDINGS[i]
 	local prev = GetBindingAction(key)
 	for _, old in ipairs({ GetBindingKey(binding) }) do SetBinding(old) end
@@ -353,13 +375,13 @@ function ns.BindKey(key, i)
 	SaveBindings(GetCurrentBindingSet())
 	ns.RefreshWatchedKeys()
 	if prev and prev ~= "" and prev ~= binding then
-		ns.Print(GetBindingText(key, "KEY_") .. " estaba asignada a " .. (_G["BINDING_NAME_" .. prev] or prev) .. "; ahora abre la rueda " .. i .. ".")
+		ns.Print(L("%s estaba asignada a %s; ahora abre la rueda %d.", GetBindingText(key, "KEY_"), _G["BINDING_NAME_" .. prev] or prev, i))
 	end
 	return true
 end
 
 function ns.ClearKey(i)
-	if InCombatLockdown() then ns.Print("No se puede cambiar el atajo en combate."); return end
+	if InCombatLockdown() then ns.Print(L("No se puede cambiar el atajo en combate.")); return end
 	for _, old in ipairs({ GetBindingKey(ns.BINDINGS[i]) }) do SetBinding(old) end
 	SaveBindings(GetCurrentBindingSet())
 	ns.RefreshWatchedKeys()
@@ -383,11 +405,14 @@ events:SetScript("OnEvent", function(_, event, arg1)
 	if event == "UPDATE_BINDINGS" then
 		if ns.RefreshWatchedKeys then ns.RefreshWatchedKeys() end
 	elseif event == "PLAYER_REGEN_ENABLED" then
-		-- los atributos seguros no se pueden cambiar en combate: al salir, se limpia cualquier acción que quedara armada
-		for i = 1, ns.MAX_PROFILES do ns.SetSecureCharacterAction(i, false) end
+		-- los atributos seguros no se pueden cambiar en combate: al salir, se termina la preparación pendiente
+		-- y se limpia cualquier acción que quedara armada
+		SetupInputs()
+		for i = 1, ns.MAX_PROFILES do ns.SetSecureAction(i, nil) end
 	elseif event == "ADDON_LOADED" and arg1 == addonName then
 		RadialHubDB = RadialHubDB or {}
 		ns.db = RadialHubDB
+		ns.SetLanguage(ns.db.lang)
 		Fill(ns.db)
 	elseif event == "PLAYER_LOGIN" then
 		ns.RefreshWatchedKeys()
@@ -403,9 +428,9 @@ events:SetScript("OnEvent", function(_, event, arg1)
 		ns.db.keyInit = true
 		local action = GetBindingAction(DEFAULT_KEY)
 		if not GetBindingKey(ns.BINDINGS[1]) and (not action or action == "") and ns.BindKey(DEFAULT_KEY, 1) then
-			ns.Print("listo: mantén " .. DEFAULT_KEY .. " para abrir la rueda. /rh para configurarla.")
+			ns.Print(L("listo: mantén %s para abrir la rueda. /rh para configurarla.", DEFAULT_KEY))
 		elseif not GetBindingKey(ns.BINDINGS[1]) then
-			ns.Print("escribe /rh para asignar la tecla de la rueda.")
+			ns.Print(L("escribe /rh para asignar la tecla de la rueda."))
 		end
 	end
 end)
@@ -451,8 +476,8 @@ inputMonitor:SetScript("OnUpdate", function()
 			ns.Wheel.Open(i)
 		elseif not down and heldProfiles[i] then
 			heldProfiles[i] = nil
-			if ns.HasSecureCharacterAction(i) then
-				ns.SetSecureCharacterAction(i, false)
+			if ns.ArmedAction(i) then -- el clic seguro ya la abrió al soltar la tecla
+				ns.SetSecureAction(i, nil)
 				ns.Wheel.Cancel()
 			else
 				ns.Wheel.Release()
@@ -468,6 +493,6 @@ SlashCmdList["RADIALHUB"] = function(msg)
 	if cmd == "check" then ns.Check()
 	elseif cmd == "debug" then
 		ns.debug = not ns.debug
-		ns.Print("depuración " .. (ns.debug and "activada" or "desactivada"))
+		ns.Print(ns.debug and L("depuración activada") or L("depuración desactivada"))
 	else ns.Config.Toggle() end
 end

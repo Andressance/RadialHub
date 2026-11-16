@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.4.0
+
+- Nuevo: selector de idioma en `/rh` (Automático según el cliente, Español o English). Afecta a la rueda, la configuración y los mensajes.
+- Mapa del mundo vuelve a estar disponible en WoW Forever: se abre con un clic seguro en el nombre de la zona del minimapa.
+
+Además, todo lo de la 0.3.2 (que no llegó a publicarse): revisión completa de contaminación (taint) para que RadialHub no vuelva a provocar errores de Blizzard en combate.
+
+- Los paneles del juego solo se abren con un clic seguro sobre su botón de Blizzard (micro menú, mochila...), como ya hacía Personaje. Abrirlos desde Lua contaminaba el estado que luego usa el Modo edición y causaba `ADDON_ACTION_BLOCKED` en `MainActionBar:SetPointBase()` al cambiar de forma en combate. Si tu cliente no tiene el botón de un panel, ese panel no aparece; `/rh check` lista los botones disponibles.
+- En combate los paneles no se pueden elegir desde la rueda (Blizzard no deja cambiar el clic seguro en combate). Emotes y comandos sí funcionan.
+- Los comandos propios ya no pasan por la caja del chat (la contaminaba): se ejecutan directamente los de otros addons, los emotes y `/run`. Los comandos de Blizzard (`/cast`, `/use`, `/macro`, `/reload`...) se rechazan con un aviso.
+- La configuración no se abre en combate y se cierra sola al entrar en combate (nada de teclado ni atajos en combate).
+- Si el addon se carga en combate, la preparación del botón seguro espera a salir de combate.
+- Quitado el tooltip de los colores predefinidos (usaba el tooltip de Blizzard).
+- Las pruebas revisan el código y fallan si alguien vuelve a usar una API que ya contaminó la interfaz (`UISpecialFrames`, `HideUIPanel`, `RunBinding`, `ChatEdit_*`, `RegisterStateDriver`, `Toggle*()`...).
+
 ## 0.3.1
 
 - Corregido el error de valores secretos al entrar en el Modo edición (y otros paneles abiertos desde el menú del juego). RadialHub añadía sus ventanas a `UISpecialFrames` para cerrarlas con Escape, y eso contaminaba el menú del juego. Ahora Escape se detecta sin tocar esa lista.

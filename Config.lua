@@ -5,6 +5,8 @@
 local addonName, ns = ...
 local Config = {}
 ns.Config = Config
+local L = ns.L
+local texts = {} -- textos fijos (clave en español) que se vuelven a traducir al cambiar de idioma
 
 local floor, max, min, abs = math.floor, math.max, math.min, math.abs
 local WHITE = "Interface\\Buttons\\WHITE8X8"
@@ -14,11 +16,11 @@ local BD = { bgFile = WHITE, edgeFile = WHITE, edgeSize = 1, insets = { left = 1
 local ROW_H, POOL = 28, 16        -- alto de fila y filas máximas (POOL >= filas visibles con la ventana al máximo)
 local LIST_TOP = -212             -- y de la primera fila dentro de `left`
 local CHROME = 46 + 24 + 212 + 34 -- alto fijo alrededor de la lista (cabecera, pie, botones)
-local MIN_W, MIN_H, MAX_W, MAX_H = 720, 480, 1100, 900
+local MIN_W, MIN_H, MAX_W, MAX_H = 720, 520, 1100, 900
 
 local frame, left, right, editor, picker
 local keyBtn, keyHint, soundCheck, animCheck, nameBox, delBtn, countText, track, thumb
-local tabs, filterTabs, rows, sliders, swatches = {}, {}, {}, {}, {}
+local tabs, filterTabs, rows, sliders, swatches, langButtons = {}, {}, {}, {}, {}, {}
 local capturing, delArmed, offset, filter = false, false, 0, nil -- filter: nil (todo) | "menu" | "emote" | "command"
 
 ----------------------------------------------------------------------------------------------------
@@ -29,7 +31,11 @@ local function Text(parent, size, r, g, b, text)
 	fs:SetFont(FONT, size)
 	fs:SetTextColor(r, g, b)
 	fs:SetJustifyH("LEFT")
-	if text then fs:SetText(text) end
+	if text then
+		fs.lkey = text
+		fs:SetText(L(text))
+		texts[#texts + 1] = fs
+	end
 	return fs
 end
 
@@ -126,7 +132,7 @@ local function RefreshList()
 			local entry = ns.Entry(it.id)
 			row.idx, row.pos, row.view, row.item = idx, pos, view, it
 			ns.Circle(row.icon, ns.IconPath(entry.icon))
-			row.name:SetText(entry.name)
+			row.name:SetText(L(entry.name))
 			local c = entry.custom and { 0.7, 0.85, 1 } or { 0.95, 0.95, 0.95 }
 			row.name:SetTextColor(it.on and c[1] or 0.45, it.on and c[2] or 0.45, it.on and c[3] or 0.5)
 			row.icon:SetVertexColor(it.on and 1 or 0.4, it.on and 1 or 0.4, it.on and 1 or 0.4)
@@ -151,7 +157,7 @@ local function RefreshList()
 		track:Hide(); thumb:Hide()
 	end
 	local on = CountOn(Profile())
-	countText:SetText(on .. "/" .. ns.MAX_SLOTS .. " activas")
+	countText:SetText(L("%d/%d activas", on, ns.MAX_SLOTS))
 	countText:SetTextColor(on >= ns.MAX_SLOTS and 1 or 0.55, on >= ns.MAX_SLOTS and 0.5 or 0.55, on >= ns.MAX_SLOTS and 0.3 or 0.6)
 end
 
@@ -165,11 +171,11 @@ local function Refresh()
 	for i = 1, ns.MAX_PROFILES do
 		local t, p = tabs[i], db.profiles[i]
 		if p then
-			t.label:SetText(p.name ~= "" and p.name or ("Rueda " .. i))
+			t.label:SetText(p.name ~= "" and p.name or L("Rueda %d", i))
 			t:Show()
 		elseif not plus then
 			plus = i
-			t.label:SetText("+ Nueva")
+			t.label:SetText(L("+ Nueva"))
 			t:Show()
 		else
 			t:Hide()
@@ -179,11 +185,11 @@ local function Refresh()
 	end
 	if not nameBox:HasFocus() then nameBox:SetText(Profile().name) end
 	SetEnabled(delBtn, sel ~= 1)
-	delBtn.label:SetText(delArmed and "¿Seguro?" or "Borrar rueda")
+	delBtn.label:SetText(delArmed and L("¿Seguro?") or L("Borrar rueda"))
 
 	local key = GetBindingKey(ns.BINDINGS[sel])
-	keyBtn.label:SetText(capturing and "Pulsa una tecla..." or (key or "Sin asignar"))
-	keyHint:SetText("Tecla de la rueda " .. sel .. ": mantén, apunta y suelta.")
+	keyBtn.label:SetText(capturing and L("Pulsa una tecla...") or (key or L("Sin asignar")))
+	keyHint:SetText(L("Tecla de la rueda %d: mantén, apunta y suelta.", sel))
 
 	for _, ft in ipairs(filterTabs) do
 		local on = (ft.cat == filter)
@@ -205,6 +211,10 @@ local function Refresh()
 	end
 	soundCheck:SetChecked(db.sound)
 	animCheck:SetChecked(db.anim)
+	for _, b in ipairs(langButtons) do
+		local on = (b.lang == (db.lang or "auto"))
+		b:SetBackdropBorderColor(on and a[1] or 0.3, on and a[2] or 0.3, on and a[3] or 0.36, 1)
+	end
 end
 
 ----------------------------------------------------------------------------------------------------
@@ -215,7 +225,7 @@ local MOUSE_KEYS = { MiddleButton = "BUTTON3", Button4 = "BUTTON4", Button5 = "B
 
 local function StopCapture()
 	capturing = false
-	keyBtn:EnableKeyboard(false)
+	if not InCombatLockdown() then keyBtn:EnableKeyboard(false) end -- en combate la ventana ya está oculta
 	Refresh()
 end
 
@@ -225,7 +235,10 @@ end
 
 local function Capture(key)
 	StopCapture()
-	if ns.BindKey(Modifiers() .. key, ns.db.selected) then Refresh() end
+	if ns.BindKey(Modifiers() .. key, ns.db.selected) then
+		ns.Print(L("atajo guardado. Haz /reload antes de entrar en combate para que Blizzard no arrastre el cambio."))
+		Refresh()
+	end
 end
 
 local function SetAccent(r, g, b)
@@ -293,8 +306,7 @@ local function BuildEditor()
 	editor.cmd = Field("Comando (una línea)", -138, 398)
 
 	local hint = Text(editor, 10, 0.55, 0.55, 0.6,
-		"Ejemplos: /run ToggleCollectionsJournal()  ·  /dbm pull 10  ·  /reload. Sirve cualquier script (/run) o comando de otro addon. " ..
-		"Blizzard bloquea /cast, /use y las macros a los addons, así que hechizos y objetos no funcionan desde aquí.")
+		"Sirven comandos de otros addons (/dbm pull 10), emotes (/dance) y /run con tu propio código. Los comandos de Blizzard (/cast, /use, /macro, /reload...) no: lanzarlos desde un addon contamina su interfaz.")
 	hint:SetWidth(398); hint:SetWordWrap(true)
 	hint:SetPoint("TOPLEFT", editor, "TOPLEFT", 16, -192)
 
@@ -302,7 +314,7 @@ local function BuildEditor()
 	editor.save:SetPoint("BOTTOMLEFT", editor, "BOTTOMLEFT", 16, 16)
 	editor.save:SetScript("OnClick", function()
 		local name = strtrim(editor.name:GetText())
-		if name == "" then name = "Sin nombre" end
+		if name == "" then name = L("Sin nombre") end
 		local icon, cmd = strtrim(editor.icon:GetText()), strtrim(editor.cmd:GetText())
 		local cat
 		if editor.id then
@@ -324,7 +336,7 @@ local function BuildEditor()
 	editor.del:SetScript("OnClick", function()
 		if not editor.delArmed then
 			editor.delArmed = true
-			editor.del.label:SetText("¿Seguro?")
+			editor.del.label:SetText(L("¿Seguro?"))
 			return
 		end
 		ns.DeleteCustom(editor.id)
@@ -338,11 +350,11 @@ local function OpenEditor(id)
 	if picker then picker:Hide() end
 	local e = id and ns.db.custom[id]
 	editor.id, editor.delArmed = id, false
-	editor.title:SetText(e and "Editar entrada" or "Nuevo comando")
+	editor.title:SetText(e and L("Editar entrada") or L("Nuevo comando"))
 	editor.name:SetText(e and e.name or "")
 	editor.icon:SetText(e and e.icon or "")
 	editor.cmd:SetText(e and e.command or "")
-	editor.del.label:SetText("Eliminar entrada")
+	editor.del.label:SetText(L("Eliminar entrada"))
 	if e then editor.del:Show() else editor.del:Hide() end
 	editor:Show()
 end
@@ -350,12 +362,12 @@ end
 local function OpenPicker()
 	if not picker then
 		picker = Popup(430, 60 + 4 * 30 + 50)
-		picker.title:SetText("Añadir emote")
+		picker.title:SetText(L("Añadir emote"))
 		for i, e in ipairs(ns.Emotes) do
 			local b = Flat(picker, 124, 24, e[1])
 			b:SetPoint("TOPLEFT", picker, "TOPLEFT", 16 + ((i - 1) % 3) * 130, -46 - floor((i - 1) / 3) * 30)
 			b:SetScript("OnClick", function()
-				ns.AddCustom({ name = e[1], icon = e[3], command = "", cat = "emote", emote = e[2] }, ns.db.selected)
+				ns.AddCustom({ name = L(e[1]), icon = e[3], command = "", cat = "emote", emote = e[2] }, ns.db.selected)
 				picker:Hide()
 				Added("emote")
 			end)
@@ -385,7 +397,7 @@ local function MakeRow(r)
 	row.check:SetScript("OnClick", function(self)
 		local want = self:GetChecked() and true or false
 		if want and CountOn(Profile()) >= ns.MAX_SLOTS then
-			ns.Print("máximo " .. ns.MAX_SLOTS .. " opciones por rueda.")
+			ns.Print(L("máximo %d opciones por rueda.", ns.MAX_SLOTS))
 			want = false
 		end
 		row.item.on = want
@@ -441,7 +453,7 @@ local function Slider(key, label, minV, maxV, step, fmt, y)
 	s:SetValueStep(step)
 	local txt = Text(right, 11, 0.85, 0.85, 0.9)
 	txt:SetPoint("BOTTOMLEFT", s, "TOPLEFT", 0, 5)
-	s.show = function(v) txt:SetText(label .. ": " .. fmt(v)) end
+	s.show = function(v) txt:SetText(L(label) .. ": " .. fmt(v)) end
 	s:SetScript("OnValueChanged", function(self, v)
 		v = floor(v / step + 0.5) * step
 		self.show(v)
@@ -482,13 +494,17 @@ local function Build()
 	end)
 	frame:SetScript("OnSizeChanged", function(self) if self:IsShown() then RefreshList() end end)
 	frame:SetScript("OnHide", function()
+		if not InCombatLockdown() then frame:SetPropagateKeyboardInput(true) end
 		if capturing then StopCapture() end
 		if editor then editor:Hide() end
 		if picker then picker:Hide() end
 		delArmed = false
 	end)
 	frame:RegisterEvent("UPDATE_BINDINGS")
-	frame:SetScript("OnEvent", Refresh)
+	frame:RegisterEvent("PLAYER_REGEN_DISABLED") -- la ventana no se usa en combate: se cierra al entrar
+	frame:SetScript("OnEvent", function(self, event)
+		if event == "PLAYER_REGEN_DISABLED" then self:Hide() elseif self:IsShown() then Refresh() end
+	end)
 	frame:Hide()
 
 	local title = Text(frame, 16, 1, 0.82, 0.2, "RadialHub")
@@ -564,7 +580,7 @@ local function Build()
 			local mouse = MOUSE_KEYS[button]
 			if mouse then Capture(mouse) else StopCapture() end
 		elseif button == "LeftButton" then
-			if InCombatLockdown() then ns.Print("No se puede cambiar el atajo en combate."); return end
+			if InCombatLockdown() then ns.Print(L("No se puede cambiar el atajo en combate.")); return end
 			capturing = true
 			keyBtn:EnableKeyboard(true) -- un marco con teclado se queda todas las teclas
 			Refresh()
@@ -576,7 +592,11 @@ local function Build()
 	end)
 	local clear = Flat(left, 70, 24, "Quitar")
 	clear:SetPoint("LEFT", keyBtn, "RIGHT", 8, 0)
-	clear:SetScript("OnClick", function() ns.ClearKey(ns.db.selected); Refresh() end)
+	clear:SetScript("OnClick", function()
+		ns.ClearKey(ns.db.selected)
+		ns.Print(L("atajo quitado. Haz /reload antes de entrar en combate para que Blizzard no arrastre el cambio."))
+		Refresh()
+	end)
 	keyHint = Text(left, 10, 0.55, 0.55, 0.6)
 	keyHint:SetPoint("TOPLEFT", left, "TOPLEFT", 0, -144)
 
@@ -624,12 +644,6 @@ local function Build()
 		sw:SetPoint("TOPLEFT", right, "TOPLEFT", 4 + (i - 1) * 36, -236)
 		sw:SetBackdropColor(p[1], p[2], p[3], 1)
 		sw.color = p
-		sw:SetScript("OnEnter", function(self)
-			GameTooltip:SetOwner(self, "ANCHOR_TOP")
-			GameTooltip:SetText(p.name)
-			GameTooltip:Show()
-		end)
-		sw:SetScript("OnLeave", function() GameTooltip:Hide() end)
 		sw:SetScript("OnClick", function() SetAccent(p[1], p[2], p[3]) end)
 		swatches[i] = sw
 	end
@@ -647,6 +661,20 @@ local function Build()
 	animCheck:SetScript("OnClick", function(self) ns.db.anim = self:GetChecked() and true or false end)
 	Text(right, 12, 0.9, 0.9, 0.9, "Animación"):SetPoint("LEFT", animCheck, "RIGHT", 4, 0)
 
+	Text(right, 12, 0.9, 0.9, 0.9, "Idioma"):SetPoint("TOPLEFT", right, "TOPLEFT", 4, -344)
+	for i, opt in ipairs({ { "auto", "Automático" }, { "es", "Español" }, { "en", "English" } }) do
+		local b = Flat(right, 72, 22, opt[2])
+		b:SetPoint("TOPLEFT", right, "TOPLEFT", 64 + (i - 1) * 76, -340)
+		b.lang = opt[1]
+		b:SetScript("OnClick", function()
+			ns.db.lang = opt[1] ~= "auto" and opt[1] or nil
+			ns.SetLanguage(ns.db.lang)
+			for _, fs in ipairs(texts) do fs:SetText(L(fs.lkey)) end
+			Refresh()
+		end)
+		langButtons[i] = b
+	end
+
 	local reset = Flat(right, 230, 26, "Restaurar valores por defecto")
 	reset:SetPoint("BOTTOM", right, "BOTTOM", 0, 0)
 	reset:SetScript("OnClick", function() ns.ResetDB(); Refresh() end)
@@ -655,10 +683,11 @@ local function Build()
 end
 
 function Config.Toggle()
+	if InCombatLockdown() then ns.Print(L("la configuración no se puede abrir en combate.")); return end
 	if not frame then
 		local ok, err = pcall(Build)
 		if not ok then -- si falla, que se vea el motivo y no quede una ventana a medias
-			ns.Print("error al crear la ventana: " .. tostring(err))
+			ns.Print(L("error al crear la ventana: %s", tostring(err)))
 			if frame then frame:Hide(); frame = nil end
 			return
 		end
