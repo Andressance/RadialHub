@@ -303,4 +303,14 @@ local grown = collectgarbage("count") - before
 collectgarbage("restart")
 check(grown < 1, "idle polling allocates nothing (grew " .. grown .. " KB over 10000 frames)")
 
+-- 12. no taint vectors: nothing added to UISpecialFrames; Escape still cancels the open wheel
+check(#UISpecialFrames == 0, "RadialHub must not add frames to UISpecialFrames (taints the game menu / Edit Mode)")
+cursor[1], cursor[2] = 500, 400
+ns.Wheel.Open(1)
+check(wheel:IsShown(), "wheel open")
+keyDown.ESCAPE = true
+wheel.scripts.OnUpdate(wheel, 0.016)
+keyDown.ESCAPE = nil
+check(not wheel:IsShown(), "Escape cancels the wheel")
+
 print("ok")

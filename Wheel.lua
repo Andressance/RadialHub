@@ -66,6 +66,7 @@ local function SizeDisc(t, d) t:SetWidth(d); t:SetHeight(d) end
 
 local function OnUpdate(_, dt)
 	dt = min(dt, 0.05)
+	if IsKeyDown("ESCAPE") then Wheel.Cancel() return end
 	if IsMouseButtonDown("RightButton") then Wheel.Cancel() return end
 
 	-- Failsafe: si el cliente no entrega el "up" (p. ej. se soltó ALT antes que la tecla), lo detectamos aquí.
@@ -204,7 +205,8 @@ local function Build()
 	frame:SetFrameStrata("FULLSCREEN_DIALOG")
 	frame:SetWidth(1); frame:SetHeight(1) -- solo ancla: todo lo demás se centra en él
 	frame:Hide()
-	tinsert(UISpecialFrames, "RadialHubFrame") -- Escape cierra (y OnHide cancela)
+	-- Sin UISpecialFrames: añadir nombres ahí contamina CloseSpecialWindows (Escape) -> menú del juego -> Modo edición.
+	-- Escape se detecta sondeando la tecla en OnUpdate.
 
 	bg       = Disc(frame, "BACKGROUND", 0, 0, 0, 1)
 	coreRing = Disc(frame, "BORDER", 1, 1, 1, 1)

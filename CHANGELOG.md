@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.1
+
+- Corregido el error de valores secretos al entrar en el Modo edición (y otros paneles abiertos desde el menú del juego). RadialHub añadía sus ventanas a `UISpecialFrames` para cerrarlas con Escape, y eso contaminaba el menú del juego. Ahora Escape se detecta sin tocar esa lista.
+- El botón de RadialHub en Opciones ya no cierra paneles de Blizzard (`HideUIPanel`), otra fuente de contaminación; la ventana de configuración se muestra por encima.
+
 ## 0.3.0
 
 - Optimización de CPU. La detección de la tecla mantenida ya no crea tablas ni cadenas en cada fotograma: las teclas asignadas se analizan una vez (al entrar y cuando cambian los atajos) y, si no hay ninguna asignada, no se ejecuta nada.

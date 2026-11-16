@@ -456,7 +456,8 @@ local function Build()
 	frame = CreateFrame("Frame", "RadialHubConfig", UIParent, "BackdropTemplate")
 	frame:SetWidth(db.winW or 780); frame:SetHeight(db.winH or 600)
 	frame:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
-	frame:SetFrameStrata("HIGH") -- por debajo del selector de color (DIALOG)
+	frame:SetFrameStrata("DIALOG") -- por encima del panel de Opciones; el selector de color (toplevel) sube al mostrarse
+	frame:SetToplevel(true)
 	frame:SetBackdrop(BD)
 	frame:SetBackdropColor(0.05, 0.05, 0.07, 0.97)
 	frame:SetBackdropBorderColor(0.25, 0.25, 0.3, 1)
@@ -466,7 +467,19 @@ local function Build()
 	frame:RegisterForDrag("LeftButton")
 	frame:SetScript("OnDragStart", frame.StartMoving)
 	frame:SetScript("OnDragStop", frame.StopMovingOrSizing)
-	frame:SetScript("OnShow", Refresh)
+	frame:SetScript("OnShow", function()
+		if not InCombatLockdown() then frame:SetPropagateKeyboardInput(true) end
+		Refresh()
+	end)
+	-- Escape cierra la ventana sin usar UISpecialFrames (que contamina el menú del juego y el Modo edición):
+	-- el marco deja pasar todas las teclas y solo se queda Escape.
+	frame:EnableKeyboard(true)
+	frame:SetScript("OnKeyDown", function(self, key)
+		if key == "ESCAPE" and not InCombatLockdown() then
+			self:SetPropagateKeyboardInput(false)
+			self:Hide()
+		end
+	end)
 	frame:SetScript("OnSizeChanged", function(self) if self:IsShown() then RefreshList() end end)
 	frame:SetScript("OnHide", function()
 		if capturing then StopCapture() end
@@ -476,7 +489,6 @@ local function Build()
 	end)
 	frame:RegisterEvent("UPDATE_BINDINGS")
 	frame:SetScript("OnEvent", Refresh)
-	tinsert(UISpecialFrames, "RadialHubConfig")
 	frame:Hide()
 
 	local title = Text(frame, 16, 1, 0.82, 0.2, "RadialHub")
@@ -663,11 +675,9 @@ Text(panel, 16, 1, 0.82, 0.2, "RadialHub"):SetPoint("TOPLEFT", panel, "TOPLEFT",
 Text(panel, 12, 0.9, 0.9, 0.9, "Rueda radial rápida. También con /rh."):SetPoint("TOPLEFT", panel, "TOPLEFT", 16, -44)
 local open = Flat(panel, 200, 26, "Abrir configuración")
 open:SetPoint("TOPLEFT", panel, "TOPLEFT", 16, -72)
+-- Sin HideUIPanel: cerrar paneles de Blizzard desde un addon contamina su gestor de paneles.
+-- La ventana usa la capa DIALOG, así que se ve por encima de Opciones.
 open:SetScript("OnClick", function()
-	-- si no, estos paneles tapan nuestra ventana (alguno puede no existir en este cliente)
-	if SettingsPanel then HideUIPanel(SettingsPanel) end
-	if InterfaceOptionsFrame then HideUIPanel(InterfaceOptionsFrame) end
-	HideUIPanel(GameMenuFrame)
 	if not (frame and frame:IsShown()) then Config.Toggle() end
 end)
 if Settings and Settings.RegisterCanvasLayoutCategory then
