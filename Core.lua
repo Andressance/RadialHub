@@ -18,15 +18,15 @@ for i = 1, ns.MAX_PROFILES do
 	ns.LEGACY_BINDINGS[i] = { "RADIALHUB_TOGGLE" .. (i == 1 and "" or i), "QUICKWHEEL_TOGGLE" .. (i == 1 and "" or i) }
 	_G["BINDING_NAME_" .. ns.BINDINGS[i]] = "Abrir rueda " .. i .. " (mantener pulsada)"
 	local profile = i
-	local input = CreateFrame("Button", name, UIParent, "SecureActionButtonTemplate,SecureHandlerStateTemplate")
+	local input = CreateFrame("Button", name, UIParent, "SecureActionButtonTemplate")
 	input:SetSize(1, 1); input:SetPoint("BOTTOMLEFT", UIParent, "BOTTOMLEFT", -20, -20)
 	input:SetAlpha(0); input:EnableMouse(true); input:RegisterForClicks("AnyDown", "AnyUp")
 	input:SetAttribute("useOnKeyDown", false)
 	-- This button is only bound through CLICK ...:LeftButton, so use the exact
 	-- click attributes instead of wildcard attributes.
+	-- No RegisterStateDriver / SecureHandlerStateTemplate aquí: ese registro contamina SecureStateDriverManager,
+	-- que es quien pagina la barra de acción (formas, etc.), y rompía las barras tras un rato de sesión.
 	input:SetAttribute("type1", nil)
-	input:SetAttribute("_onstate-rhcombat", [[if newstate == "combat" then self:SetAttribute("type1", nil) end]])
-	RegisterStateDriver(input, "rhcombat", "[combat] combat; nocombat")
 	secureInputs[i] = input
 end
 
@@ -375,8 +375,12 @@ function QuickWheel_OnKey(keystate, i) RadialHub_OnKey(keystate, i) end -- migra
 local events = CreateFrame("Frame")
 events:RegisterEvent("ADDON_LOADED")
 events:RegisterEvent("PLAYER_LOGIN")
+events:RegisterEvent("PLAYER_REGEN_ENABLED")
 events:SetScript("OnEvent", function(_, event, arg1)
-	if event == "ADDON_LOADED" and arg1 == addonName then
+	if event == "PLAYER_REGEN_ENABLED" then
+		-- los atributos seguros no se pueden cambiar en combate: al salir, se limpia cualquier acción que quedara armada
+		for i = 1, ns.MAX_PROFILES do ns.SetSecureCharacterAction(i, false) end
+	elseif event == "ADDON_LOADED" and arg1 == addonName then
 		RadialHubDB = RadialHubDB or {}
 		ns.db = RadialHubDB
 		Fill(ns.db)

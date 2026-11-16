@@ -27,8 +27,12 @@ local function newFrame(name)
 	function f:GetChecked() return false end
 	function f:SetText(t) self.text = t end
 	function f:GetText() return self.text end
-	function f:SetAttribute(k, v) self.attributes = self.attributes or {}; self.attributes[k] = v end
-	function f:GetAttribute(k) return self.attributes and self.attributes[k] end
+	function f:SetAttribute(k, v) -- rawget: a missing field would hit the no-op __index below
+		local a = rawget(self, "attributes")
+		if not a then a = {}; self.attributes = a end
+		a[k] = v
+	end
+	function f:GetAttribute(k) local a = rawget(self, "attributes"); return a and a[k] end
 	if name then _G[name] = f end
 	return setmetatable(f, { __index = function() return function(self) return self end end }) -- any other method: no-op
 end
@@ -74,7 +78,8 @@ for _, file in ipairs({ "Core.lua", "Wheel.lua", "Config.lua" }) do assert(loadf
 local function check(cond, msg) if not cond then error("FAIL: " .. msg, 2) end end
 local function load(db)
 	RadialHubDB = db
-	local events = frames[1]
+	local events -- Core's event frame: the first one with an OnEvent (the secure inputs come before it)
+	for _, f in ipairs(frames) do if f.scripts.OnEvent then events = f; break end end
 	events.scripts.OnEvent(events, "ADDON_LOADED", "RadialHub")
 	return RadialHubDB
 end
@@ -102,6 +107,12 @@ check(RadialHubSecureInput1:GetAttribute("type1") == "click" and RadialHubSecure
 	"character uses a secure click target")
 ns.SetSecureCharacterAction(1, false)
 check(RadialHubSecureInput1:GetAttribute("type1") == nil, "secure character click is cleared")
+-- leaving combat clears an action that was left armed (it cannot be cleared during combat)
+ns.SetSecureCharacterAction(1, true)
+local evFrame
+for _, f in ipairs(frames) do if f.scripts.OnEvent then evFrame = f; break end end
+evFrame.scripts.OnEvent(evFrame, "PLAYER_REGEN_ENABLED")
+check(RadialHubSecureInput1:GetAttribute("type1") == nil, "armed character click cleared after combat")
 ns.BindKey("ALT-X", 1)
 check(bindingClick[1] == "ALT-X" and bindingClick[2] == "RadialHubSecureInput1", "wheel key is bound to its secure input button")
 local active = ns.GetActive(1)

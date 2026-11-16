@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.8
+
+- Eliminado el `RegisterStateDriver` y el `SecureHandlerStateTemplate` del botón seguro: contaminaban el gestor de estados de Blizzard, que también cambia la barra de acción al cambiar de forma. Era la causa probable de que, pasado un rato de sesión, aparecieran errores de valores secretos en las barras de acción y la barra no cambiara al transformarse.
+- Al salir de combate se limpia cualquier acción segura que hubiera quedado armada (ya no se desarma al entrar en combate).
+
 ## 0.2.7
 
 - El botón seguro de Personaje ahora usa atributos específicos para `LeftButton`, el clic usado por el atajo de RadialHub.
